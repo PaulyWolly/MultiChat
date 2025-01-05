@@ -19,6 +19,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
+    "googleapis": "^144.0.0",
     "marked": "^14.1.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.41.0",
     "mongodb": "^6.10.0",

@@ -1,9 +1,9 @@
 /*
   SERVER.js
-  Version: 20.0.0
-  AppName: Multi-Chat [v20.0.0]
+  Version: 19.4.1-r-p-j-yt
+  AppName: Multi-Chat [v19.4.1 R-P-J-YT]
   Created by Paul Welby
-  updated: January 5, 2025 @7:30PM
+  updated: January 3, 2025 @9:45PM
 */
 
 // Required dependencies
@@ -36,7 +36,9 @@ const openai = new OpenAI({
 const app = express();
 
 // Set the port
-const port = process.env.PORT || 32000;
+const port = process.env.PORT || 31941;
+
+const INDEX_PAGE = 'index_v19.4.html';
 
 // Configure middleware with increased limits
 app.use(cors());
@@ -48,10 +50,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 console.log('Starting server initialization...');
 
-
 // =====================================================
 // UTILITY/HELPER FUNCTIONS
 // =====================================================
+
+// SSE Connection logging
+function logSSEConnection(req, status) {
+    const timestamp = new Date().toLocaleString();
+    const clientId = req.headers['last-event-id'] || 'unknown';
+    console.log(`[${timestamp}] SSE Connection ${status} - Client: ${clientId}`);
+}
 
 // TIME RELATED FUNCTIONS
 
@@ -69,7 +77,7 @@ function formatTimestamp(date) {
     }).format(date);
 }
 
-// PATTERNS for time, date, greetings, and bing search
+ // Basic patterns for server-side processing
 const chatPatterns = {
     greetings: [
         /^hi$/i,
@@ -140,7 +148,6 @@ function getHoliday(date) {
     const holidays = {
         "1/1": "New Year's Day",
         "7/4": "Independence Day",
-        "12/24": "Christmas Eve",
         "12/25": "Christmas Day",
         "12/31": "New Year's Eve"
     };
@@ -203,6 +210,7 @@ function getTimeOfDay(timezone = 'America/Los_Angeles') {
 function formatMinutesPlural(minutes) {
     return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
 }
+
 // =====================================================
 // LOGGING FUNCTIONS
 // =====================================================
@@ -261,6 +269,39 @@ app.use((req, res, next) => {
 
     next();
 });
+
+// Add MongoDB connection logging
+mongoose.connect(process.env.MONGODB_URI).then(async () => {
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    console.log('\n━━━━━━ MongoDB Connection ━━━━━━');
+    console.log('Connected successfully to:', {
+        host: mongoose.connection.host,
+        port: mongoose.connection.port,
+        name: mongoose.connection.name,
+        collections: collections.map(c => c.name)
+    });
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+    // Initialize collections
+    conversationCollection = mongoose.connection.collection('conversation_history');
+
+    // Check jokes collection
+    const jokeCount = await Joke.countDocuments();
+    console.log('\n━━━━━━ Jokes Collection Status ━━━━━━');
+    console.log('Total jokes:', jokeCount);
+    console.log('Collection ready:', collections.some(c => c.name === 'my_jokes'));
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+}).catch(err => {
+    console.error('\n━━━━━━ MongoDB Error ━━━━━━');
+    console.error('Connection failed:', {
+        error: err.message,
+        code: err.code,
+        uri: process.env.MONGODB_URI?.replace(/\/\/.*@/, '//***:***@')
+    });
+    console.error('━━━━━━━━━━━━━━━━━━━━━━━\n');
+});
+
 
 
 // =====================================================
@@ -330,42 +371,16 @@ app.get('/api/personal-info/:type', async (req, res) => {
 app.post('/api/personal-info', async (req, res) => {
     try {
         const { type, value } = req.body;
-
-        // Log the request details to help track unwanted updates
-        console.log('Personal info storage request:', {
-            type,
-            value,
-            headers: req.headers,
-            timestamp: new Date().toISOString(),
-            referrer: req.headers.referer,
-            source: req.headers['x-request-source'] || 'unknown'
-        });
-
-        // For name updates, check if it's an unwanted overwrite
-        if (type === 'name') {
-            // Get the current stored name
-            const currentInfo = await PersonalInfo.findOne(
-                { userId: PERSISTENT_SESSION.id, type: 'name' }
-            ).sort({ timestamp: -1 });
-
-            // If there's an existing name and this is an unwanted overwrite
-            if (currentInfo?.value &&
-                value.toLowerCase().includes('relieved') &&
-                req.headers['x-request-source'] === 'ai-response') {
-                console.warn('Prevented unwanted name overwrite:', {
-                    current: currentInfo.value,
-                    attempted: value
-                });
-                return res.status(400).json({
-                    error: 'Invalid update attempt',
-                    details: 'Prevented unwanted name overwrite from AI response'
-                });
-            }
-        }
-
         const sessionId = `${PERSISTENT_SESSION.type}-${PERSISTENT_SESSION.id}-${PERSISTENT_SESSION.version}`;
 
-        // Store the info
+        console.log('Attempting to store personal info:', {
+            type,
+            value,
+            sessionId,
+            database: mongoose.connection.name,
+            connected: mongoose.connection.readyState === 1
+        });
+
         const info = new PersonalInfo({
             userId: PERSISTENT_SESSION.id,
             sessionId,
@@ -381,13 +396,16 @@ app.post('/api/personal-info', async (req, res) => {
         await info.save();
         console.log('Successfully stored in MongoDB:', {
             id: info._id,
-            type,
-            value,
-            collection: info.collection.name
+            collection: info.collection.name,
+            database: mongoose.connection.db.databaseName
         });
         res.json({ success: true, value });
     } catch (error) {
-        console.error('Error storing personal info:', error);
+        console.error('Error storing personal info:', {
+            error: error.message,
+            stack: error.stack,
+            connectionState: mongoose.connection.readyState
+        });
         res.status(500).json({ error: error.message });
     }
 });
@@ -395,8 +413,9 @@ app.post('/api/personal-info', async (req, res) => {
 
 // basic route for index.html
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', INDEX_PAGE));
 });
+
 
 // Azure TTS voices endpoint
 app.get('/api/voices', async (req, res) => {
@@ -421,12 +440,14 @@ app.get('/api/voices', async (req, res) => {
         console.error('Error fetching voices:', error);
         res.status(500).json({
             error: 'Failed to fetch voices',
-            details: error.message
+            details: error.message,
+            responseData: error.response ? error.response.data : null,
+            responseStatus: error.response ? error.response.status : null
         });
     }
 });
 
-// TTS endpoint with correct environment variable name
+// TTS endpoint with optimized response handling
 app.post('/api/tts', async (req, res) => {
     console.log('\n=== TTS Request Started ===');
     try {
@@ -437,11 +458,13 @@ app.post('/api/tts', async (req, res) => {
             throw new Error('Missing text or voice parameter');
         }
 
-        // Prepare SSML
+        // Prepare SSML with optimized settings
         const ssml = `
             <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
                 <voice name="${voice}">
-                    ${text}
+                    <prosody rate="1.1">
+                        ${text}
+                    </prosody>
                 </voice>
             </speak>`;
 
@@ -466,9 +489,11 @@ app.post('/api/tts', async (req, res) => {
         const audioBuffer = await response.arrayBuffer();
         console.log('Audio received, length:', audioBuffer.byteLength);
 
+        // Send response with optimized headers
         res.writeHead(200, {
             'Content-Type': 'audio/mpeg',
-            'Content-Length': audioBuffer.byteLength
+            'Content-Length': audioBuffer.byteLength,
+            'Cache-Control': 'no-cache'
         });
 
         res.end(Buffer.from(audioBuffer));
@@ -503,7 +528,7 @@ app.get('/api/chat', (req, res) => {
     res.write(`data: ${JSON.stringify({ type: 'connection', status: 'established' })}\n\n`);
     isConnected = true;
 
-    // Set up heartbeat interval with animation
+    // Set up heartbeat interval
     let heartPhase = 0;  // 0: empty, 1: red, 2: light red
     const heartbeatInterval = setInterval(() => {
         if (!isConnected) {
@@ -532,7 +557,55 @@ app.get('/api/chat', (req, res) => {
         }
     }, 500);
 
-    // Add cleanup on connection close
+    // Handle the chat response in smaller chunks
+    const handleChatResponse = async (messages, selectedModel) => {
+        try {
+            const completion = await openai.chat.completions.create({
+                model: selectedModel,
+                messages: messages,
+                stream: true
+            });
+
+            let buffer = '';
+            for await (const chunk of completion) {
+                if (chunk.choices[0]?.delta?.content) {
+                    buffer += chunk.choices[0].delta.content;
+
+                    // Send smaller chunks more frequently
+                    if (buffer.match(/[.!?]\s+/) || buffer.split(' ').length >= 3) {
+                        const textToSend = buffer;
+                        buffer = '';
+
+                        if (isConnected) {
+                            res.write(`data: ${JSON.stringify({
+                                response: textToSend,
+                                isPartial: true
+                            })}\n\n`);
+                        }
+                    }
+                }
+            }
+
+            // Send any remaining text
+            if (buffer.trim() && isConnected) {
+                res.write(`data: ${JSON.stringify({
+                    response: buffer,
+                    isPartial: true
+                })}\n\n`);
+            }
+        } catch (error) {
+            console.error('Chat response error:', error);
+            if (isConnected) {
+                res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+            }
+        }
+    };
+
+    req.on('error', (error) => {
+        console.log('SSE Request error:', error.message);
+        isConnected = false;
+    });
+
     req.on('close', () => {
         process.stdout.write(`\u001b[?25h`);  // Windows-compatible cursor show
         process.stdout.write('\n');
@@ -543,12 +616,29 @@ app.get('/api/chat', (req, res) => {
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         clearInterval(heartbeatInterval);
     });
+
+    // Handle incoming messages through POST body
+    req.on('data', async (data) => {
+        try {
+            const { message, history, model, systemPrompt } = JSON.parse(data.toString());
+            const messages = [...history, { role: 'user', content: message }];
+
+            // Call handleChatResponse with proper messages
+            await handleChatResponse(messages, model || 'gpt-4o-mini');
+
+            // Send completion message
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        } catch (error) {
+            console.error('Error processing message:', error);
+            res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+        }
+    });
 });
 
 // Chat endpoint with hierarchical query handling
 app.post('/api/chat', async (req, res) => {
     try {
-        const { message, history, model, systemPrompt, timezone } = req.body;
+        const { message, history, model, systemPrompt, session, timezone } = req.body;
         const startTime = Date.now();
 
         // 1. First check for greetings, using simplified patterns for server-side checks
@@ -817,6 +907,7 @@ app.post('/api/datetime', async (req, res) => {
         });
     }
 });
+
 
 // =====================================================
 // JOKE HANDLING ROUTES
@@ -1167,8 +1258,6 @@ app.get('/api/debug/session', (req, res) => {
 // GPT-4o-mini model handler
 async function handleGPT4oMiniResponse(response, res, message, startTime) {
     console.log('Starting GPT-4o-mini response handling');
-
-    // const startTime = Date.now();
     let tokenCount = 0;
     let fullResponse = '';
     let currentParagraph = '';
@@ -1179,70 +1268,36 @@ async function handleGPT4oMiniResponse(response, res, message, startTime) {
         for await (const chunk of response) {
             if (isEnded) break;
 
-            // Add debug logging
-            console.log('Received chunk:', JSON.stringify(chunk));
-
-            // Check if chunk and choices exist before accessing
-            if (!chunk || !chunk.choices || !Array.isArray(chunk.choices) || chunk.choices.length === 0) {
-                console.warn('Invalid chunk format:', chunk);
-                continue;
-            }
-
             if (chunk.choices[0]?.delta?.content) {
                 const content = chunk.choices[0].delta.content;
+
+                // Send raw content immediately without metrics for faster audio processing
+                if (!res.writableEnded) {
+                    res.write(`data: ${JSON.stringify({
+                        response: content
+                    })}\n\n`);
+                }
+
+                // Update tracking variables after sending
                 fullResponse += content;
                 currentParagraph += content;
-
-                // Update token count
                 tokenCount += Math.ceil(content.length / 4);
 
-                // Check for special markers or line breaks
+                // Handle special markers and formatting as before
                 if (content.includes('[/P1]') ||
-                   content.includes('[/P2]') ||
-                   content.includes('[/P3]') ||
-                   content.includes('[/IMG]') ||
-                   content.includes('\n\n')) {
-
-                   // Clean up markers and add proper spacing
-                   let cleanParagraph = currentParagraph
-                       .replace(/\[P1\]|\[P2\]|\[P3\]|\[IMG\]|\[\/P1\]|\[\/P2\]|\[\/P3\]|\[\/IMG\]/g, '')
-                       .trim();
+                    content.includes('[/P2]') ||
+                    content.includes('[/P3]') ||
+                    content.includes('[/IMG]') ||
+                    content.includes('\n\n')) {
+                    let cleanParagraph = currentParagraph
+                        .replace(/\[P1\]|\[P2\]|\[P3\]|\[IMG\]|\[\/P1\]|\[\/P2\]|\[\/P3\]|\[\/IMG\]/g, '')
+                        .trim();
 
                     if (cleanParagraph && cleanParagraph !== lastSentContent) {
-                        if (!res.writableEnded) {
-                            res.write(`data: ${JSON.stringify({
-                                response: cleanParagraph + '\n\n',
-                                tokenCount: tokenCount,
-                                metrics: {
-                                    duration: Date.now() - startTime,
-                                    promptTokens: Math.ceil(fullResponse.length / 4),
-                                    completionTokens: tokenCount,
-                                    totalTokens: Math.ceil(fullResponse.length / 4) + tokenCount,
-                                    model: 'gpt-4o-mini'
-                                }
-                            })}\n\n`);
-                        }
                         lastSentContent = cleanParagraph;
                         currentParagraph = '';
                     }
                 }
-            }
-        }
-
-        // Send any remaining content and final metrics
-        if (currentParagraph.trim() && currentParagraph.trim() !== lastSentContent) {
-            if (!res.writableEnded) {
-                res.write(`data: ${JSON.stringify({
-                    response: currentParagraph.trim(),
-                    tokenCount: tokenCount,
-                    metrics: {
-                        duration: Date.now() - startTime,
-                        promptTokens: Math.ceil(fullResponse.length / 4),
-                        completionTokens: tokenCount,
-                        totalTokens: Math.ceil(fullResponse.length / 4) + tokenCount,
-                        model: 'gpt-4o-mini'
-                    }
-                })}\n\n`);
             }
         }
 
@@ -1251,8 +1306,8 @@ async function handleGPT4oMiniResponse(response, res, message, startTime) {
             console.log('Sending completion signal');
             res.write(`data: ${JSON.stringify({
                 done: true,
-                complete: true,  // Additional flag for completion
-                response: null,  // Indicate no more content
+                complete: true,
+                response: null,
                 metrics: {
                     duration: Date.now() - startTime,
                     promptTokens: Math.ceil(message.length / 4),
@@ -1261,32 +1316,11 @@ async function handleGPT4oMiniResponse(response, res, message, startTime) {
                     model: 'gpt-4o-mini'
                 }
             })}\n\n`);
-
-            // // Reset processing state
-            // state.isProcessing = false;
-
-            // // If in conversation mode and not speaking, restart listening
-            // if (state.isConversationMode && !state.isAISpeaking) {
-            //     console.log('Restarting listening after completion');
-            //     setTimeout(() => {
-            //         if (!state.isAISpeaking && !state.isProcessing) {
-            //             startListening();
-            //             updateStatus('Listening...');
-            //         }
-            //     }, 1000);
-            // }
-
-            // // Remove processing alert
-            // document.querySelector('.processing-alert')?.remove();
-
             res.end();
             isEnded = true;
         }
     } catch (error) {
         console.error('Error in handleGPT4oMiniResponse:', error);
-        // state.isProcessing = false;  // Reset processing state even on error
-        document.querySelector('.processing-alert')?.remove();
-
         if (!res.writableEnded) {
             res.write(`data: ${JSON.stringify({
                 error: error.message,
@@ -1300,9 +1334,9 @@ async function handleGPT4oMiniResponse(response, res, message, startTime) {
 }
 
 // Phi-3-mini-4k-instruct model handler
-async function handlePhi3Mini4kInstructResponse(response, res) {
+async function handlePhi3Mini4kInstructResponse(response, res, message, startTime) {
     console.log('Using Phi-3-mini-4k-instruct model');
-    const startTime = Date.now();
+    // const startTime = Date.now();
 
     try {
         let lastMessage = '';
@@ -1385,12 +1419,14 @@ async function handlePhi3Mini4kInstructResponse(response, res) {
 }
 
 
-// =====================================================
-// SEARCH ENDPOINTS
-// =====================================================
+/*
+ =========================
+ SEARCH HANDLING
+ =========================
+*/
 
 // =====================================================
-// GOOGLE IMAGE SEARCH ENDPOINT
+// GOOGLE IMAGE SEARCH HANDLING
 // =====================================================
 
 // Google Image Search endpoint
@@ -1426,7 +1462,7 @@ app.get('/api/google-image-search', async (req, res) => {
 
 
 // =====================================================
-// BING SEARCH ENDPOINT
+// BING SEARCH HANDLING
 // =====================================================
 
 // Update the BING_SEARCH_PROMPT for better formatting guidance
@@ -1555,9 +1591,8 @@ app.post('/api/bing-search', async (req, res) => {
 });
 
 
-
 // =====================================================
-// PERSONAL INFO ENDPOINTS
+// PERSONAL INFO HANDLING
 // =====================================================
 
 // Session configuration
@@ -1672,7 +1707,7 @@ personalInfoSchema.index({ sessionId: 1, type: 1 });
 // Add index for joke lookups
 jokeSchema.index({ userId: 1, title: 1 });
 
-// Create model
+// Create models
 const PersonalInfo = mongoose.model('PersonalInfo', personalInfoSchema);
 const Joke = mongoose.model('Joke', jokeSchema);
 
@@ -1706,22 +1741,6 @@ async function connectWithRetry() {
 
 // Initial connection
 connectWithRetry();
-
-// Single MongoDB connection
-mongoose.connect(process.env.MONGODB_URI).then(() => {
-    console.log('MongoDB connected successfully to:', {
-        host: mongoose.connection.host,
-        port: mongoose.connection.port,
-        name: mongoose.connection.name
-    });
-    conversationCollection = mongoose.connection.collection('conversation_history');
-}).catch(err => {
-    console.error('MongoDB connection error:', {
-        error: err.message,
-        code: err.code,
-        uri: process.env.MONGODB_URI?.replace(/\/\/.*@/, '//***:***@')
-    });
-});
 
 // Handle disconnection
 mongoose.connection.on('disconnected', () => {
@@ -1816,9 +1835,30 @@ app.post('/api/debug/add-test-joke', async (req, res) => {
 
 
 // =====================================================
-// YOUTUBE API ENDPOINTS
+// SERVER LISTENER
 // =====================================================
 
+// Call the server and port
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Server listening at http://localhost:${port}`);
+}).on('error', (error) => {
+    console.error('Error starting server:', error);
+    if (error.code === 'EACCES') {
+        console.error('Permission denied. Try using a port number above 1024.');
+    } else if (error.code === 'EADDRINUSE') {
+        console.error('Port is already in use. Try a different port.');
+    }
+});
+
+
+// =====================================================
+// YOUTUBE API CONFIGURATION
+// =====================================================
+
+// Add YouTube API configuration
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+
+// YouTube search endpoint with full logging and functionality
 app.post('/api/youtube/search', async (req, res) => {
     try {
         const { query, type = 'search' } = req.body;
@@ -1896,23 +1936,5 @@ app.post('/api/youtube/search', async (req, res) => {
 
 
 // =====================================================
-// SERVER LISTENER
-// =====================================================
-
-// Call the server and port
-app.listen(port, '0.0.0.0', () => {
-    console.log(`Server listening at http://localhost:${port}`);
-}).on('error', (error) => {
-    console.error('Error starting server:', error);
-    if (error.code === 'EACCES') {
-        console.error('Permission denied. Try using a port number above 1024.');
-    } else if (error.code === 'EADDRINUSE') {
-        console.error('Port is already in use. Try a different port.');
-    }
-});
-
-
-
-// =====================================================
-// END OF Server.js FILE v20.0.0
+// END OF server.js FILE v19.4.1-R-P-J-YT
 // =====================================================
