@@ -1,0 +1,29 @@
+{
+  "name": "multi-chat_v20.0.0",
+  "version": "20.0.0",
+  "description": "#\u0000 \u0000d\u0000p\u0000e\u0000-\u0000g\u0000e\u0000n\u0000e\u0000-\u0000a\u0000i\u0000-\u0000c\u0000h\u0000a\u0000t\u0000-\u0000S\u0000L\u0000M\u0000-\u0000A\u0000P\u0000I\u0000M\u0000\r\u0000 \u0000",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@azure/cognitiveservices-imagesearch": "^3.0.1",
+    "@google-cloud/text-to-speech": "^5.3.0",
+    "@google-cloud/vertexai": "^1.4.1",
+    "@google/generative-ai": "^0.17.0",
+    "axios": "^1.7.7",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "marked": "^14.1.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.41.0",
+    "mongodb": "^6.10.0",
+    "mongoose": "^8.8.3",
+    "node-cache": "^5.1.2",
+    "openai": "^4.57.0"
+  }
+}
