@@ -819,344 +819,108 @@ app.post('/api/datetime', async (req, res) => {
 });
 
 // =====================================================
-// JOKE HANDLING ROUTES
+// JOKE API ENDPOINTS
 // =====================================================
 
-/**
- * Save a new joke
- * POST /api/jokes
- * @body {title, content, userId}
- */
+// Save a joke
 app.post('/api/jokes', async (req, res) => {
     try {
         const { title, content, userId } = req.body;
-        const joke = new Joke({ title, content, userId });
+        const joke = new Joke({
+            title,
+            content,
+            userId,
+            dateCreated: new Date()
+        });
         await joke.save();
         res.json({ success: true, joke });
     } catch (error) {
         console.error('Error saving joke:', error);
-        res.json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * List all jokes for user
- * GET /api/jokes/list
- * @query {string} sessionId - User's session ID
- */
+// Get a specific joke
+app.get('/api/jokes/:title', async (req, res) => {
+    try {
+        const { title } = req.params;
+        const { sessionId } = req.query;
+        const joke = await Joke.findOne({
+            title: new RegExp(title, 'i'),
+            userId: sessionId
+        });
+        res.json({ success: true, joke });
+    } catch (error) {
+        console.error('Error retrieving joke:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// List jokes endpoint
 app.get('/api/jokes/list', async (req, res) => {
     try {
-        const showAll = req.query.view === 'all';
-        const userId = req.query.userId;
+        const { view, userId } = req.query;
+        console.log('List jokes request:', { view, userId });
 
-        console.log('\n━━━━━━ Joke List Request ━━━━━━');
-        console.log('Request details:', {
-            showAll,
-            userId,
-            url: req.url,
-            query: req.query
-        });
-
-        // Check MongoDB connection
-        console.log('MongoDB status:', {
-            readyState: mongoose.connection.readyState,
-            connected: mongoose.connection.readyState === 1,
-            database: mongoose.connection.name
-        });
-
-        if (!showAll && !userId) {
-            console.log('No userId provided for personal jokes');
-            return res.json({
-                success: true,
-                jokes: [],
-                message: 'UserId required for personal jokes'
-            });
-        }
-
-        const query = showAll ? {} : { userId };
-        console.log('Executing query:', {
-            query,
-            collection: 'my_jokes',
-            showAll
-        });
-
+        let query = view === 'all' ? {} : { userId };
         const jokes = await Joke.find(query).sort({ dateCreated: -1 });
 
-        console.log('Query results:', {
+        console.log('Found jokes:', {
             count: jokes.length,
-            userSpecific: !showAll,
-            userId: userId || 'all',
-            jokes: jokes.map(j => ({
-                id: j._id,
-                title: j.title,
-                userId: j.userId
-            }))
+            userSpecific: view !== 'all'
         });
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
         res.json({ success: true, jokes });
     } catch (error) {
         console.error('Error listing jokes:', error);
-        res.json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Get joke by title
- * GET /api/jokes/:title
- * @param {string} title - The title of the joke
- * @query {string} sessionId - User's session ID
- */
-app.get('/api/jokes/:title', async (req, res) => {
-    try {
-        console.log('\n━━━━━━ Joke Search Request ━━━━━━');
-        console.log('Search parameters:', {
-            title: req.params.title,
-            sessionId: req.query.sessionId,
-            rawTitle: decodeURIComponent(req.params.title)
-        });
-
-        // Create a more flexible regex pattern
-        const titleRegex = new RegExp(req.params.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-
-        console.log('Using regex pattern:', titleRegex);
-
-        const joke = await Joke.findOne({
-            title: titleRegex,
-            userId: req.query.sessionId
-        });
-
-        console.log('Search results:', {
-            found: !!joke,
-            jokeTitle: joke?.title,
-            userId: joke?.userId
-        });
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-        res.json({
-            success: !!joke,
-            joke: joke ? {
-                id: joke._id,
-                title: joke.title,
-                content: joke.content
-            } : null
-        });
-    } catch (error) {
-        console.error('Error retrieving joke:', error);
-        res.json({ success: false, error: error.message });
-    }
-});
-
-/**
- * Delete joke by ID
- * DELETE /api/jokes/:id
- * @param {string} id - The ID of the joke to delete
- * @query {string} userId - User's ID for verification
- */
+// Delete a joke
 app.delete('/api/jokes/:id', async (req, res) => {
     try {
-        const joke = await Joke.findOneAndDelete({
-            _id: req.params.id,
-            userId: req.query.userId
-        });
-        res.json({
-            success: !!joke,
-            message: joke ? 'Joke deleted successfully' : 'Joke not found'
-        });
+        const { id } = req.params;
+        await Joke.findByIdAndDelete(id);
+        res.json({ success: true });
     } catch (error) {
         console.error('Error deleting joke:', error);
-        res.json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Migrate jokes between user sessions
- * POST /api/jokes/migrate
- * @body {fromUserId, toUserId}
- */
-app.post('/api/jokes/migrate', async (req, res) => {
+// Update a joke
+app.put('/api/jokes/:title', async (req, res) => {
     try {
-        const { fromUserId, toUserId } = req.body;
-        console.log('Starting joke migration:', { from: fromUserId, to: toUserId });
-
-        const jokes = await Joke.find({ userId: fromUserId });
-        console.log('Found jokes to migrate:', { count: jokes.length, jokes });
-
-        if (jokes.length > 0) {
-            const result = await Joke.updateMany(
-                { userId: fromUserId },
-                { $set: { userId: toUserId } }
-            );
-            console.log('Migration complete:', {
-                modifiedCount: result.modifiedCount,
-                migratedJokes: jokes.length,
-                newUserId: toUserId
-            });
-        }
-
-        res.json({
-            success: true,
-            message: `Updated ${jokes.length} jokes`,
-            details: {
-                from: fromUserId,
-                to: toUserId,
-                count: jokes.length
-            }
-        });
-    } catch (error) {
-        console.error('Error migrating jokes:', error);
-        res.json({ success: false, error: error.message });
-    }
-});
-
-/**
- * Import jokes
- * POST /api/jokes/import
- * @body {jokes, newUserId}
- */
-app.post('/api/jokes/import', async (req, res) => {
-    try {
-        const { jokes, newUserId } = req.body;
-
-        console.log('\n━━━━━━ Importing Jokes ━━━━━━');
-        console.log('Import details:', {
-            jokeCount: jokes.length,
-            newUserId
-        });
-
-        // Clear existing jokes first
-        await Joke.deleteMany({});
-
-        // Prepare jokes with new userId
-        const jokesToImport = jokes.map(joke => ({
-            ...joke,
-            userId: newUserId,
-            dateCreated: new Date(joke.dateCreated.$date)
-        }));
-
-        // Import jokes
-        const result = await Joke.insertMany(jokesToImport);
-
-        console.log('Import results:', {
-            imported: result.length,
-            userId: newUserId
-        });
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-        res.json({
-            success: true,
-            imported: result.length,
-            jokes: result
-        });
-    } catch (error) {
-        console.error('Error importing jokes:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Update all joke userIds
- * POST /api/jokes/update-user
- * @body {newUserId} - The new userId to set for all jokes
- */
-app.post('/api/jokes/update-user', async (req, res) => {
-    try {
-        const { newUserId } = req.body;
-
-        console.log('\n━━━━━━ Updating Joke UserIds ━━━━━━');
-        console.log('New userId:', newUserId);
-
-        const result = await Joke.updateMany(
-            {}, // update all jokes
-            { $set: { userId: newUserId } }
+        const { title } = req.params;
+        const { content, userId } = req.body;
+        const joke = await Joke.findOneAndUpdate(
+            { title: new RegExp(title, 'i'), userId },
+            { content },
+            { new: true }
         );
-
-        console.log('Update complete:', {
-            modified: result.modifiedCount,
-            matched: result.matchedCount
-        });
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-        res.json({
-            success: true,
-            modified: result.modifiedCount,
-            message: `Updated ${result.modifiedCount} jokes`
-        });
+        res.json({ success: true, joke });
     } catch (error) {
-        console.error('Error updating jokes:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        console.error('Error updating joke:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-/**
- * Debug endpoint to get joke info
- * GET /api/jokes/debug/info
- */
-app.get('/api/jokes/debug/info', async (req, res) => {
+// Search jokes
+app.get('/api/jokes/search', async (req, res) => {
     try {
-        const allJokes = await Joke.find({});
-        console.log('\n━━━━━━ Jokes Database Info ━━━━━━');
-        console.log('Total jokes:', allJokes.length);
-        console.log('Unique userIds:', [...new Set(allJokes.map(j => j.userId))]);
-        console.log('Sample jokes:', allJokes.slice(0, 2));
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-        res.json({
-            total: allJokes.length,
-            userIds: [...new Set(allJokes.map(j => j.userId))],
-            samples: allJokes.slice(0, 2)
+        const { term } = req.query;
+        const jokes = await Joke.find({
+            $or: [
+                { title: new RegExp(term, 'i') },
+                { content: new RegExp(term, 'i') }
+            ]
         });
+        res.json({ success: true, jokes });
     } catch (error) {
-        console.error('Error getting jokes info:', error);
-        res.status(500).json({ error: error.message });
+        console.error('Error searching jokes:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
-});
-
-/**
- * Debug endpoint to update all joke userIds
- * POST /api/jokes/debug/update-users
- * @body {newUserId} - The new userId to set for all jokes
- */
-app.post('/api/jokes/debug/update-users', async (req, res) => {
-    try {
-        const { newUserId } = req.body;
-        console.log('\n━━━━━━ Updating All Joke UserIds ━━━━━━');
-        console.log('New userId:', newUserId);
-
-        const result = await Joke.updateMany(
-            {}, // update all jokes
-            { $set: { userId: newUserId } }
-        );
-
-        console.log('Update complete:', {
-            matched: result.matchedCount,
-            modified: result.modifiedCount
-        });
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-        res.json({
-            success: true,
-            matched: result.matchedCount,
-            modified: result.modifiedCount
-        });
-    } catch (error) {
-        console.error('Error updating jokes:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Debug endpoint to get session and stored jokes
-app.get('/api/debug/session', (req, res) => {
-    res.json({
-        currentSessionId: req.query.sessionId,
-        storedJokes: Joke.find({}).select('title userId').lean()
-    });
 });
 
 

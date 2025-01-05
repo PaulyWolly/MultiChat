@@ -250,7 +250,7 @@ function getPatterns() {
         jokes: {
             listAll: /(?:.*?)(all jokes)(?:.*?)$/i,
             listMine: /(?:.*?)(my jokes)(?:.*?)$/i,
-            getMyJoke: /(?:tell|show|get|read)(?:\s+me)?\s+my\s+joke\s+(?:about|with|containing)\s+"?([^"]+)"?/i,  // Updated pattern
+            getMyJoke: /(?:tell|show|get|read)(?:\s+me)?\s+my\s+joke\s+(?:about|with|containing)\s+"?([^"]+)"?/i,
             deleteJoke: /^delete joke id (\w+)$/i
         },
         listJokes: [
@@ -315,6 +315,109 @@ function getPatterns() {
             playVideo: /(^play|youtube play|play.*youtube|youtube.*play)/i  // Updated pattern
         }
     };
+}
+
+// Add this function near the other helper functions
+async function getGreeting() {
+    const hour = new Date().getHours();
+    const timeOfDay = getTimeOfDay();
+
+    // Get current date to check for holidays
+    const today = new Date();
+    const holiday = getHoliday(today);
+
+    // Get user's name from localStorage with correct key
+    let userName = localStorage.getItem('user_name');  // Changed from 'personalInfo.name'
+
+    console.log('Name check:', {
+        fromLocalStorage: userName,
+        key: 'user_name'
+    });
+
+    // If not in localStorage, try MongoDB
+    if (!userName) {
+        try {
+            const response = await fetch(`/api/personal-info/name?sessionId=${window.sessionId}`);
+            const data = await response.json();
+            if (data && data.value) {
+                userName = data.value;
+                // Cache it in localStorage with correct key
+                localStorage.setItem('user_name', userName);
+            }
+        } catch (error) {
+            console.error('Error getting user name:', error);
+        }
+    }
+
+    // Add comma only if we have a name
+    userName = userName ? `, ${userName}` : '';
+
+    if (holiday) {
+        return `${holiday.greeting}${userName}`;
+    }
+
+    const greetings = {
+        morning: [
+            `Good morning${userName}! How can I help you today?`,
+            `Good morning${userName}! What can I do for you?`,
+            `Good morning${userName}! How may I assist you?`
+        ],
+        afternoon: [
+            `Good afternoon${userName}! How can I help you today?`,
+            `Good afternoon${userName}! What can I do for you?`,
+            `Good afternoon${userName}! How may I assist you?`
+        ],
+        evening: [
+            `Good evening${userName}! How can I help you today?`,
+            `Good evening${userName}! What can I do for you?`,
+            `Good evening${userName}! How may I assist you?`
+        ]
+    };
+
+    const options = greetings[timeOfDay];
+    return options[Math.floor(Math.random() * options.length)];
+}
+
+// Add these helper functions near getGreeting
+function getTimeOfDay() {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'morning';
+    if (hour < 17) return 'afternoon';
+    return 'evening';
+}
+
+function getHoliday(date) {
+    const month = date.getMonth() + 1; // JavaScript months are 0-based
+    const day = date.getDate();
+    const year = date.getFullYear();
+
+    // Calculate Thanksgiving (4th Thursday of November)
+    if (month === 11) {  // November
+        const thanksgiving = new Date(year, 10, 1);  // Start with November 1
+        while (thanksgiving.getDay() !== 4) {  // Find first Thursday
+            thanksgiving.setDate(thanksgiving.getDate() + 1);
+        }
+        thanksgiving.setDate(thanksgiving.getDate() + 21);  // Add 3 weeks
+
+        if (day === thanksgiving.getDate()) {
+            return {
+                name: "Thanksgiving Day",
+                greeting: "Happy Thanksgiving!"
+            };
+        }
+    }
+
+    // Fixed date holidays
+    const holidays = {
+        "1/1": { name: "New Year's Day", greeting: "Happy New Year!" },
+        "7/4": { name: "Independence Day", greeting: "Happy Independence Day!" },
+        "12/24": { name: "Christmas Eve", greeting: "Merry Christmas Eve!" },
+        "12/25": { name: "Christmas Day", greeting: "Merry Christmas!" },
+        "12/31": { name: "New Year's Eve", greeting: "Happy New Year's Eve!" }
+    };
+
+    const dateKey = `${month}/${day}`;
+    return holidays[dateKey] || null;
 }
 
 
@@ -641,232 +744,199 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // =====================================================
 
 // Send message function
-async function sendMessage(message = null) {
-    const messageText = message || elements.userInput.value.trim();
-    const startTime = Date.now();
+async function sendMessage(message = null, isGreeting = false) {
+    try {
+        // Check for exit command first
+        if (message.toLowerCase() === 'exit') {
+            await exitConversation();
+            return;
+        }
 
-    // Check for YouTube request
-    const patterns = getPatterns();
-    if (patterns.youtube.searchVideos.test(messageText) || patterns.youtube.playVideo.test(messageText)) {
-        await handleYoutube.handleYoutubeRequest(messageText);
-        return;
-    }
+        if (isGreeting) {
+            // Add user's greeting first
+            addMessageToChat('user', message);
 
-    // First, check if this is a web search request
-    const isWebSearch = messageText.toLowerCase().match(/^(show me |do |get |find )?(a |the )?(web |bing |internet )?search for (.*)/i);
-
-    if (isWebSearch) {
-        try {
-            const requestStartTime = Date.now();  // Track request start time
-            const query = isWebSearch[4].trim();
-            addMessageToChat('user', messageText);
-
-            const response = await fetch('/api/bing-search', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ query })
+            // Add AI's greeting with proper options
+            const greeting = await getGreeting();
+            addMessageToChat('assistant', greeting, {
+                type: 'greeting',
+                messageType: 'greeting'
             });
 
-            const data = await response.json();
-            const messageElement = addMessageToChat('assistant', data.response);
-
-            // Use server's duration if available, otherwise calculate client-side
-            const requestDuration = data.metrics?.duration ||
-                `${((Date.now() - requestStartTime) / 1000).toFixed(2)}s`;
-
-            updateMetadata(messageElement, {
-                model: 'bing-search',
-                metrics: {
-                    model: 'bing-search',
-                    totalTokens: data.response.length,
-                    startTime: data.metrics.startTime || requestStartTime,
-                    endTime: data.metrics.endTime || Date.now(),
-                    duration: requestDuration
-                }
-            });
+            await queueAudioChunk(greeting);
             return;
-        } catch (error) {
-            console.error('Search error:', error);
         }
-    }
+        const messageText = message || elements.userInput.value.trim();
+        const startTime = Date.now();
 
-    // Check if this is a search query
-    if (messageText.toLowerCase().includes('search for') ||
-        messageText.toLowerCase().includes('look up')) {
-        try {
-            const query = messageText.replace(/search for|look up/i, '').trim();
-            const response = await fetch('/api/bing-search', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ query })
-            });
-
-            const data = await response.json();
-            addMessageToChat('assistant', data.response);
+        // Check for YouTube request
+        const patterns = getPatterns();
+        if (patterns.youtube.searchVideos.test(messageText) || patterns.youtube.playVideo.test(messageText)) {
+            await handleYoutube.handleYoutubeRequest(messageText);
             return;
-        } catch (error) {
-            console.error('Search error:', error);
         }
-    }
 
-    // Check for name-related queries first
-    const nameQuery = messageText.match(/what(?:'s| is) my name/i);
-    if (nameQuery) {
-        try {
-            addMessageToChat('user', messageText);
-            const startTime = Date.now();  // Track start time
-            let name = localStorage.getItem('user_name');
+        // First, check if this is a web search request
+        const isWebSearch = messageText.toLowerCase().match(/^(show me |do |get |find )?(a |the )?(web |bing |internet )?search for (.*)/i);
 
-            if (!name) {
-                const response = await fetch(`/api/personal-info/name?sessionId=${window.sessionId}`);
-                if (!response.ok) throw new Error('Failed to fetch name');
-                const data = await response.json();
-                if (data.value) {
-                    name = data.value;
-                    localStorage.setItem('user_name', name);
-                }
-            }
-
-            if (name) {
-                const response = `Your name is ${name}`;
-                const messageElement = addMessageToChat('assistant', response);
-                const endTime = Date.now();  // Track end time
-                updateMetadata(messageElement, {
-                    model: 'memory',  // This will show as "memory | 0.3s | X tokens"
-                    metrics: {
-                        model: 'memory',
-                        totalTokens: response.length,
-                        startTime: startTime,
-                        endTime: endTime
-                    },
-                    startTime: startTime,
-                    endTime: endTime
-                });
-                await queueAudioChunk(response);
-                await playNextInQueue();
-                return;
-            }
-        } catch (error) {
-            console.error('Error retrieving name:', error);
-        }
-    }
-
-    // Check if setting name
-    const nameSet = messageText.match(/(?:my name is|i am|call me) (.+)/i);
-    if (nameSet) {
-        try {
-            // Add user's message to chat
-            addMessageToChat('user', messageText);
-
-            const name = nameSet[1].trim();
-            // Store in both localStorage and MongoDB
-            localStorage.setItem('user_name', name);
-            await storePersonalInfo('name', name);
-
-            const response = `I'll remember that your name is ${name}`;
-            const messageElement = addMessageToChat('assistant', response);
-            if (state.selectedVoice) {
-                await queueAudioChunk(response);
-            }
-            return;
-        } catch (error) {
-            console.error('Error storing name:', error);
-        }
-    }
-
-    // Check for any keyword patterns in the message
-    for (const [keyword, patterns] of Object.entries(MEMORY_KEYWORDS)) {
-        // Check if storing information
-        const storeMatch = messageText.match(patterns.store);
-        if (storeMatch) {
+        if (isWebSearch) {
             try {
+                const requestStartTime = Date.now();  // Track request start time
+                const query = isWebSearch[4].trim();
                 addMessageToChat('user', messageText);
-                const value = storeMatch[1];
-                console.log('DEBUG - Storing secret word:', {
-                    keyword,
-                    value,
-                    pattern: patterns.store.toString(),
-                    match: storeMatch
-                });
 
-                // Store in both localStorage and MongoDB
-                localStorage.setItem(`memory_${keyword}`, value);
-                console.log('DEBUG - Stored in localStorage:', {
-                    key: `memory_${keyword}`,
-                    value: localStorage.getItem(`memory_${keyword}`)
-                });
-
-                await storePersonalInfo(keyword, value);
-                console.log('DEBUG - Called storePersonalInfo');
-
-                const response = `I'll remember that the ${keyword} is "${value}"`;
-                const messageElement = addMessageToChat('assistant', response);
-                const endTime = Date.now();
-                const durationInSeconds = ((endTime - startTime) / 1000).toFixed(2);
-                // Queue audio if enabled
-                // if (state.selectedVoice) {
-                //     await queueAudioChunk(response);
-                // }
-
-                // Add metadata for storage response
-                updateMetadata(messageElement, {
-                    model: 'memory',
-                    metrics: {
-                        model: 'memory',
-                        totalTokens: response.length,
-                        startTime: startTime,
-                        endTime: endTime,
-                        duration: durationInSeconds  // Change to match expected format
+                const response = await fetch('/api/bing-search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
                     },
-                    duration: durationInSeconds  // Add at top level
+                    body: JSON.stringify({ query })
                 });
 
-                await queueAudioChunk(response);
-                await playNextInQueue();
+                const data = await response.json();
+                const messageElement = addMessageToChat('assistant', data.response);
+
+                // Use server's duration if available, otherwise calculate client-side
+                const requestDuration = data.metrics?.duration ||
+                    `${((Date.now() - requestStartTime) / 1000).toFixed(2)}s`;
+
+                updateMetadata(messageElement, {
+                    model: 'bing-search',
+                    metrics: {
+                        model: 'bing-search',
+                        totalTokens: data.response.length,
+                        startTime: data.metrics.startTime || requestStartTime,
+                        endTime: data.metrics.endTime || Date.now(),
+                        duration: requestDuration
+                    }
+                });
                 return;
             } catch (error) {
-                console.error(`Error storing ${keyword}:`, error);
+                console.error('Search error:', error);
             }
         }
 
-        // Check if retrieving information
-        const retrieveMatch = messageText.match(patterns.retrieve);
-        if (retrieveMatch) {
+        // Check if this is a search query
+        if (messageText.toLowerCase().includes('search for') ||
+            messageText.toLowerCase().includes('look up')) {
+            try {
+                const query = messageText.replace(/search for|look up/i, '').trim();
+                const response = await fetch('/api/bing-search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ query })
+                });
+
+                const data = await response.json();
+                addMessageToChat('assistant', data.response);
+                return;
+            } catch (error) {
+                console.error('Search error:', error);
+            }
+        }
+
+        // Check for name-related queries first
+        const nameQuery = messageText.match(/what(?:'s| is) my name/i);
+        if (nameQuery) {
             try {
                 addMessageToChat('user', messageText);
-                const startTime = Date.now();
-                let value = localStorage.getItem(`memory_${keyword}`);
+                const startTime = Date.now();  // Track start time
+                let name = localStorage.getItem('user_name');
 
-                // Check MongoDB if not in localStorage
-                if (!value) {
-                    try {
-                        console.log('Checking MongoDB for:', keyword);
-                        const response = await fetch(`/api/personal-info/${keyword}?sessionId=${window.sessionId}`);
-                        console.log('MongoDB response status:', response.status);
-                        if (response.ok) {
-                            const data = await response.json();
-                            console.log('MongoDB data:', data);
-                            if (data.value) {
-                                value = data.value;
-                                localStorage.setItem(`memory_${keyword}`, value);
-                                console.log('Stored in localStorage from MongoDB:', value);
-                            }
-                        }
-                    } catch (error) {
-                        console.error('MongoDB lookup error:', error);
+                if (!name) {
+                    const response = await fetch(`/api/personal-info/name?sessionId=${window.sessionId}`);
+                    if (!response.ok) throw new Error('Failed to fetch name');
+                    const data = await response.json();
+                    if (data.value) {
+                        name = data.value;
+                        localStorage.setItem('user_name', name);
                     }
                 }
 
-                if (value) {
-                    let response = `The ${keyword} is "${value}"`;
+                if (name) {
+                    const response = `Your name is ${name}`;
+                    const messageElement = addMessageToChat('assistant', response);
+                    const endTime = Date.now();  // Track end time
+                    updateMetadata(messageElement, {
+                        model: 'memory',  // This will show as "memory | 0.3s | X tokens"
+                        metrics: {
+                            model: 'memory',
+                            totalTokens: response.length,
+                            startTime: startTime,
+                            endTime: endTime
+                        },
+                        startTime: startTime,
+                        endTime: endTime
+                    });
+                    await queueAudioChunk(response);
+                    await playNextInQueue();
+                    return;
+                }
+            } catch (error) {
+                console.error('Error retrieving name:', error);
+            }
+        }
+
+        // Check if setting name
+        const nameSet = messageText.match(/(?:my name is|i am|call me) (.+)/i);
+        if (nameSet) {
+            try {
+                // Add user's message to chat
+                addMessageToChat('user', messageText);
+
+                const name = nameSet[1].trim();
+                // Store in both localStorage and MongoDB
+                localStorage.setItem('user_name', name);
+                await storePersonalInfo('name', name);
+
+                const response = `I'll remember that your name is ${name}`;
+                const messageElement = addMessageToChat('assistant', response);
+                if (state.selectedVoice) {
+                    await queueAudioChunk(response);
+                }
+                return;
+            } catch (error) {
+                console.error('Error storing name:', error);
+            }
+        }
+
+        // Check for any keyword patterns in the message
+        for (const [keyword, patterns] of Object.entries(MEMORY_KEYWORDS)) {
+            // Check if storing information
+            const storeMatch = messageText.match(patterns.store);
+            if (storeMatch) {
+                try {
+                    addMessageToChat('user', messageText);
+                    const value = storeMatch[1];
+                    console.log('DEBUG - Storing secret word:', {
+                        keyword,
+                        value,
+                        pattern: patterns.store.toString(),
+                        match: storeMatch
+                    });
+
+                    // Store in both localStorage and MongoDB
+                    localStorage.setItem(`memory_${keyword}`, value);
+                    console.log('DEBUG - Stored in localStorage:', {
+                        key: `memory_${keyword}`,
+                        value: localStorage.getItem(`memory_${keyword}`)
+                    });
+
+                    await storePersonalInfo(keyword, value);
+                    console.log('DEBUG - Called storePersonalInfo');
+
+                    const response = `I'll remember that the ${keyword} is "${value}"`;
                     const messageElement = addMessageToChat('assistant', response);
                     const endTime = Date.now();
-                    const durationInSeconds = Math.max(0.01, ((endTime - startTime) / 1000)).toFixed(2);  // Minimum 0.01s
+                    const durationInSeconds = ((endTime - startTime) / 1000).toFixed(2);
+                    // Queue audio if enabled
+                    // if (state.selectedVoice) {
+                    //     await queueAudioChunk(response);
+                    // }
 
+                    // Add metadata for storage response
                     updateMetadata(messageElement, {
                         model: 'memory',
                         metrics: {
@@ -874,318 +944,375 @@ async function sendMessage(message = null) {
                             totalTokens: response.length,
                             startTime: startTime,
                             endTime: endTime,
-                            durationInSeconds: durationInSeconds
+                            duration: durationInSeconds  // Change to match expected format
                         },
-                        duration: `${durationInSeconds}s`,  // Add formatted duration
-                        durationInSeconds: durationInSeconds
+                        duration: durationInSeconds  // Add at top level
                     });
 
                     await queueAudioChunk(response);
                     await playNextInQueue();
                     return;
+                } catch (error) {
+                    console.error(`Error storing ${keyword}:`, error);
                 }
+            }
 
-                // If no value found, show "not found" message
-                const noValueResponse = `I don't have a ${keyword} stored in my memory. Would you like to tell me one?`;
-                const messageElement = addMessageToChat('assistant', noValueResponse);
-                const endTime = Date.now();
-                const durationInSeconds = ((endTime - startTime) / 1000).toFixed(2);
+            // Check if retrieving information
+            const retrieveMatch = messageText.match(patterns.retrieve);
+            if (retrieveMatch) {
+                try {
+                    addMessageToChat('user', messageText);
+                    const startTime = Date.now();
+                    let value = localStorage.getItem(`memory_${keyword}`);
 
-                updateMetadata(messageElement, {
-                    model: 'memory',
-                    metrics: {
+                    // Check MongoDB if not in localStorage
+                    if (!value) {
+                        try {
+                            console.log('Checking MongoDB for:', keyword);
+                            const response = await fetch(`/api/personal-info/${keyword}?sessionId=${window.sessionId}`);
+                            console.log('MongoDB response status:', response.status);
+                            if (response.ok) {
+                                const data = await response.json();
+                                console.log('MongoDB data:', data);
+                                if (data.value) {
+                                    value = data.value;
+                                    localStorage.setItem(`memory_${keyword}`, value);
+                                    console.log('Stored in localStorage from MongoDB:', value);
+                                }
+                            }
+                        } catch (error) {
+                            console.error('MongoDB lookup error:', error);
+                        }
+                    }
+
+                    if (value) {
+                        let response = `The ${keyword} is "${value}"`;
+                        const messageElement = addMessageToChat('assistant', response);
+                        const endTime = Date.now();
+                        const durationInSeconds = Math.max(0.01, ((endTime - startTime) / 1000)).toFixed(2);  // Minimum 0.01s
+
+                        updateMetadata(messageElement, {
+                            model: 'memory',
+                            metrics: {
+                                model: 'memory',
+                                totalTokens: response.length,
+                                startTime: startTime,
+                                endTime: endTime,
+                                durationInSeconds: durationInSeconds
+                            },
+                            duration: `${durationInSeconds}s`,  // Add formatted duration
+                            durationInSeconds: durationInSeconds
+                        });
+
+                        await queueAudioChunk(response);
+                        await playNextInQueue();
+                        return;
+                    }
+
+                    // If no value found, show "not found" message
+                    const noValueResponse = `I don't have a ${keyword} stored in my memory. Would you like to tell me one?`;
+                    const messageElement = addMessageToChat('assistant', noValueResponse);
+                    const endTime = Date.now();
+                    const durationInSeconds = ((endTime - startTime) / 1000).toFixed(2);
+
+                    updateMetadata(messageElement, {
                         model: 'memory',
-                        totalTokens: noValueResponse.length,
-                        startTime: startTime,
-                        endTime: endTime,
+                        metrics: {
+                            model: 'memory',
+                            totalTokens: noValueResponse.length,
+                            startTime: startTime,
+                            endTime: endTime,
+                            durationInSeconds: durationInSeconds
+                        },
                         durationInSeconds: durationInSeconds
-                    },
-                    durationInSeconds: durationInSeconds
-                });
+                    });
 
-                await queueAudioChunk(noValueResponse);
-                await playNextInQueue();
-                return;
-            } catch (error) {
-                console.error(`Error retrieving ${keyword}:`, error);
+                    await queueAudioChunk(noValueResponse);
+                    await playNextInQueue();
+                    return;
+                } catch (error) {
+                    console.error(`Error retrieving ${keyword}:`, error);
+                }
             }
         }
-    }
 
-    if (state.isSending || state.isProcessing) return;
-    state.isSending = true;
-    state.isProcessing = true;
-    state.stopRequested = false;
+        if (state.isSending || state.isProcessing) return;
+        state.isSending = true;
+        state.isProcessing = true;
+        state.stopRequested = false;
 
-    // Create EventSource for streaming response
-    if (state.eventSource) {
-        state.eventSource.close();
-    }
-    state.eventSource = new EventSource(`/api/chat?sessionId=${window.sessionId}`);
-
-    // Add error handler for SSE connection
-    state.eventSource.onerror = function(error) {
-        console.error('SSE Connection error:', error);
-        state.eventSource.close();
-        state.eventSource = null;
-        state.isProcessing = false;
-        state.isSending = false;
-        state.isAISpeaking = false;
-        updateStatus('Connection error. Please try again.');
-
-        // Clean up and reset states
-        resetAudioState();
-        if (state.isConversationMode) {
-            startInactivityTimer();
-            startListening();
+        // Create EventSource for streaming response
+        if (state.eventSource) {
+            state.eventSource.close();
         }
-    };
+        state.eventSource = new EventSource(`/api/chat?sessionId=${window.sessionId}`);
 
-    state.eventSource.onmessage = function(event) {
-        try {
-            const data = JSON.parse(event.data);
+        // Add error handler for SSE connection
+        state.eventSource.onerror = function(error) {
+            console.error('SSE Connection error:', error);
+            state.eventSource.close();
+            state.eventSource = null;
+            state.isProcessing = false;
+            state.isSending = false;
+            state.isAISpeaking = false;
+            updateStatus('Connection error. Please try again.');
 
-            // Handle completion signal
-            if (data.done || data.complete) {
-                console.log('Response complete, resetting states');
+            // Clean up and reset states
+            resetAudioState();
+            if (state.isConversationMode) {
+                startInactivityTimer();
+                startListening();
+            }
+        };
+
+        state.eventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+
+                // Handle completion signal
+                if (data.done || data.complete) {
+                    console.log('Response complete, resetting states');
+                    state.isProcessing = false;
+                    state.isSending = false;
+                    state.eventSource.close();
+                }
+
+                if (data.response) {
+                    // Check for special message types (greetings)
+                    if (data.messageType === 'greeting') {
+                        addMessageToChat('assistant', data.response, null, 'greeting');
+                    } else if (data.messageType === 'exit') {
+                        addMessageToChat('assistant', data.response, null, 'exit');
+                    } else if (data.messageType === 'system' || data.messageType === 'time' || data.messageType === 'date' || data.messageType === 'datetime') {  // Using 'datetime' here too
+                        addMessageToChat('assistant', data.response, null, data.messageType);  // Pass the actual type
+                    } else {
+                        // Regular message handling
+                        const messageElement = addMessageToChat('assistant', data.response, {
+                            model: data.metrics?.model,
+                            startTime: startTime,
+                            tokenCount: data.tokenCount
+                        });
+                    }
+
+                    // Queue audio if enabled
+                    if (data.shouldPlayAudio && state.selectedVoice) {
+                        queueAudioChunk(data.response);
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error handling message:', error);
                 state.isProcessing = false;
                 state.isSending = false;
                 state.eventSource.close();
             }
+        };
 
-            if (data.response) {
-                // Check for special message types (greetings)
-                if (data.messageType === 'greeting') {
-                    addMessageToChat('assistant', data.response, null, 'greeting');
-                } else if (data.messageType === 'exit') {
-                    addMessageToChat('assistant', data.response, null, 'exit');
-                } else if (data.messageType === 'system' || data.messageType === 'time' || data.messageType === 'date' || data.messageType === 'datetime') {  // Using 'datetime' here too
-                    addMessageToChat('assistant', data.response, null, data.messageType);  // Pass the actual type
-                } else {
-                    // Regular message handling
-                    const messageElement = addMessageToChat('assistant', data.response, {
-                        model: data.metrics?.model,
-                        startTime: startTime,
-                        tokenCount: data.tokenCount
-                    });
-                }
-
-                // Queue audio if enabled
-                if (data.shouldPlayAudio && state.selectedVoice) {
-                    queueAudioChunk(data.response);
-                }
-            }
-
-        } catch (error) {
-            console.error('Error handling message:', error);
-            state.isProcessing = false;
+        // If there's no message and no selected image, exit early
+        if (!messageText && !state.selectedImage) {
             state.isSending = false;
-            state.eventSource.close();
+            state.isProcessing = false;
+            return;
         }
-    };
 
-    // If there's no message and no selected image, exit early
-    if (!messageText && !state.selectedImage) {
-        state.isSending = false;
-        state.isProcessing = false;
-        return;
-    }
-
-    try {
-        // Handle image analysis
-        if (state.selectedImage) {
-            if (messageText) {
-                addMessageToChat('user', messageText);
-            }
-
-            try {
-                await handleImageAnalysis(state.selectedImage, messageText || "What's in this image?");
-                state.selectedImage = null;
-
-            } catch (error) {
-                console.error('Error analyzing image:', error);
-                addMessageToChat('error', 'Error: ' + error.message);
-            }
-        } else {
-            // Handle regular text message (existing code)
-            stopAudioPlayback();
-            if (state.isListening) stopListening();
-
-            elements.userInput.value = '';
-            updateStatus('Thinking...');
-            elements.processingIndicator.style.display = 'block';
-
-            // Check if it's an AI response being echoed back first
-            if (isAIGreetingResponse(messageText)) {
-                state.isProcessing = false;
-                state.isSending = false;
-                return;
-            }
-
-            // Handle exit command first
-            if (messageText.toLowerCase() === 'exit') {
-                addMessageToChat('user', messageText);
-                exitConversation(false);
-                return;
-            }
-
-            // Check for greetings before adding user message
-            const isGreeting = /^(hi|hi\s+there|hello|hello\s+there|hey|hey\s+there|greetings)$/i.test(messageText.trim());
-
-            if (isGreeting) {
-                try {
+        try {
+            // Handle image analysis
+            if (state.selectedImage) {
+                if (messageText) {
                     addMessageToChat('user', messageText);
-                    const startTime = Date.now();
+                }
 
-                    // Get user's name from localStorage or MongoDB
-                    let userName = localStorage.getItem('user_name');
-                    if (!userName) {
-                        try {
-                            const response = await fetch(`/api/personal-info/name?sessionId=${window.sessionId}`);
-                            if (response.ok) {
-                                const data = await response.json();
-                                if (data.value) {
-                                    userName = data.value;
-                                    localStorage.setItem('user_name', userName);
+                try {
+                    await handleImageAnalysis(state.selectedImage, messageText || "What's in this image?");
+                    state.selectedImage = null;
+
+                } catch (error) {
+                    console.error('Error analyzing image:', error);
+                    addMessageToChat('error', 'Error: ' + error.message);
+                }
+            } else {
+                // Handle regular text message (existing code)
+                stopAudioPlayback();
+                if (state.isListening) stopListening();
+
+                elements.userInput.value = '';
+                updateStatus('Thinking...');
+                elements.processingIndicator.style.display = 'block';
+
+                // Check if it's an AI response being echoed back first
+                if (isAIGreetingResponse(messageText)) {
+                    state.isProcessing = false;
+                    state.isSending = false;
+                    return;
+                }
+
+                // Handle exit command first
+                if (messageText.toLowerCase() === 'exit') {
+                    addMessageToChat('user', messageText);
+                    exitConversation(false);
+                    return;
+                }
+
+                // Check for greetings before adding user message
+                const isGreeting = /^(hi|hi\s+there|hello|hello\s+there|hey|hey\s+there|greetings)$/i.test(messageText.trim());
+
+                if (isGreeting) {
+                    try {
+                        addMessageToChat('user', messageText);
+                        const startTime = Date.now();
+
+                        // Get user's name from localStorage or MongoDB
+                        let userName = localStorage.getItem('user_name');
+                        if (!userName) {
+                            try {
+                                const response = await fetch(`/api/personal-info/name?sessionId=${window.sessionId}`);
+                                if (response.ok) {
+                                    const data = await response.json();
+                                    if (data.value) {
+                                        userName = data.value;
+                                        localStorage.setItem('user_name', userName);
+                                    }
                                 }
+                            } catch (error) {
+                                console.error('Error fetching user name:', error);
                             }
+                        }
+
+                        const timeOfDay = getTimeOfDay();
+                        let greeting = userName
+                            ? `Good ${timeOfDay} ${userName}! It's nice to chat with you again. How may I be of assistance to you today?`
+                            : `Good ${timeOfDay}! How can I assist you today?`;
+
+                        resetAudioState();
+                        const messageElement = addMessageToChat('assistant', greeting, null, 'greeting');
+                        const endTime = Date.now();
+
+                        // Add metadata for greeting
+                        updateMetadata(messageElement, {
+                            model: 'greeting',
+                            metrics: {
+                                model: 'greeting',
+                                totalTokens: greeting.length,
+                                startTime: startTime,
+                                endTime: endTime,
+                                durationInSeconds: ((endTime - startTime) / 1000).toFixed(2)
+                            },
+                            startTime: startTime,
+                            endTime: endTime
+                        });
+
+                        try {
+                            await queueAudioChunk(greeting);
+                            await playNextInQueue();
                         } catch (error) {
-                            console.error('Error fetching user name:', error);
+                            console.error('Audio playback error:', error);
+                        }
+
+                        return;
+                    } catch (error) {
+                        console.error('Error in greeting:', error);
+                    }
+                }
+
+                // For all other messages, add user message before processing
+                addMessageToChat('user', messageText);
+
+                // Update the time/date check to be more specific
+                const hasDate = messageText.toLowerCase().includes('date') || messageText.toLowerCase().includes('today');
+                const hasTime = messageText.toLowerCase().includes('time');
+                const isDateTimeRequest = hasDate || hasTime;
+
+                if (isDateTimeRequest) {
+                    const today = new Date();
+                    let response;
+
+                    // Check if asking for date, time, or both
+                    if (hasTime && !hasDate) {
+                        response = `The local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+                    } else if (hasDate && !hasTime) {
+                        response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
+                    } else {
+                        response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} and the local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+                    }
+
+                    // const messageElement = addMessageToChat('assistant', response);
+                    addMessageToChat('assistant', response);
+
+                    // Queue audio for date/time response
+                    await queueAudioChunk(response);
+
+                    return;
+                }
+
+                // Check if the user is asking for a joke
+                const isJokeRequest = messageText.toLowerCase().includes('joke');
+                const adjustedSystemPrompt = isJokeRequest
+                    ? `${systemPrompt} Provide a short, one-line joke that hasn't been told before.`
+                    : systemPrompt;
+
+                try {
+                    const response = await getAIResponse(
+                        messageText,
+                        state.selectedModel,
+                        state.conversationHistory, // Only use current session history
+                        adjustedSystemPrompt,
+                        window.sessionId
+                    );
+
+                    state.conversationHistory.push({ role: 'user', content: messageText });
+                    state.conversationHistory.push({ role: 'assistant', content: response.response });
+
+                    if (response.messageElement) {
+                        updateMessageContent(response.messageElement, response.response);
+                        updateMetadata(response.messageElement, {
+                            model: state.selectedModel,
+                            startTime: response.startTime,
+                            endTime: Date.now(),
+                            tokenCount: response.tokenCount
+                        });
+                    }
+
+                    if (/\b(more|info|detail|image|images|picture|pictures|photo|photos)\b/i.test(messageText)) {
+                        const searchQuery = messageText.replace(/\b(more|info|detail|image|images|picture|pictures|photo|photos)\b/gi, '').trim();
+                        const imageResults = await searchAndDisplayImages(searchQuery);
+                        if (imageResults && imageResults.images && imageResults.images.length > 0) {
+                            insertAndStyleImages(imageResults.images, response.messageElement);
                         }
                     }
 
-                    const timeOfDay = getTimeOfDay();
-                    let greeting = userName
-                        ? `Good ${timeOfDay} ${userName}! It's nice to chat with you again. How may I be of assistance to you today?`
-                        : `Good ${timeOfDay}! How can I assist you today?`;
-
-                    resetAudioState();
-                    const messageElement = addMessageToChat('assistant', greeting, null, 'greeting');
-                    const endTime = Date.now();
-
-                    // Add metadata for greeting
-                    updateMetadata(messageElement, {
-                        model: 'greeting',
-                        metrics: {
-                            model: 'greeting',
-                            totalTokens: greeting.length,
-                            startTime: startTime,
-                            endTime: endTime,
-                            durationInSeconds: ((endTime - startTime) / 1000).toFixed(2)
-                        },
-                        startTime: startTime,
-                        endTime: endTime
-                    });
-
-                    try {
-                        await queueAudioChunk(greeting);
-                        await playNextInQueue();
-                    } catch (error) {
-                        console.error('Audio playback error:', error);
-                    }
-
-                    return;
+                    console.log('Queueing audio for response:', response.response);
                 } catch (error) {
-                    console.error('Error in greeting:', error);
-                }
-            }
-
-            // For all other messages, add user message before processing
-            addMessageToChat('user', messageText);
-
-            // Update the time/date check to be more specific
-            const hasDate = messageText.toLowerCase().includes('date') || messageText.toLowerCase().includes('today');
-            const hasTime = messageText.toLowerCase().includes('time');
-            const isDateTimeRequest = hasDate || hasTime;
-
-            if (isDateTimeRequest) {
-                const today = new Date();
-                let response;
-
-                // Check if asking for date, time, or both
-                if (hasTime && !hasDate) {
-                    response = `The local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
-                } else if (hasDate && !hasTime) {
-                    response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
-                } else {
-                    response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} and the local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
-                }
-
-                // const messageElement = addMessageToChat('assistant', response);
-                addMessageToChat('assistant', response);
-
-                // Queue audio for date/time response
-                await queueAudioChunk(response);
-
-                return;
-            }
-
-            // Check if the user is asking for a joke
-            const isJokeRequest = messageText.toLowerCase().includes('joke');
-            const adjustedSystemPrompt = isJokeRequest
-                ? `${systemPrompt} Provide a short, one-line joke that hasn't been told before.`
-                : systemPrompt;
-
-            try {
-                const response = await getAIResponse(
-                    messageText,
-                    state.selectedModel,
-                    state.conversationHistory, // Only use current session history
-                    adjustedSystemPrompt,
-                    window.sessionId
-                );
-
-                state.conversationHistory.push({ role: 'user', content: messageText });
-                state.conversationHistory.push({ role: 'assistant', content: response.response });
-
-                if (response.messageElement) {
-                    updateMessageContent(response.messageElement, response.response);
-                    updateMetadata(response.messageElement, {
-                        model: state.selectedModel,
-                        startTime: response.startTime,
-                        endTime: Date.now(),
-                        tokenCount: response.tokenCount
-                    });
-                }
-
-                if (/\b(more|info|detail|image|images|picture|pictures|photo|photos)\b/i.test(messageText)) {
-                    const searchQuery = messageText.replace(/\b(more|info|detail|image|images|picture|pictures|photo|photos)\b/gi, '').trim();
-                    const imageResults = await searchAndDisplayImages(searchQuery);
-                    if (imageResults && imageResults.images && imageResults.images.length > 0) {
-                        insertAndStyleImages(imageResults.images, response.messageElement);
+                    console.error(`Error getting AI response:`, error);
+                    updateStatus('Error: ' + error.message);
+                    addMessageToChat('error', `Error: ${error.message}`);
+                } finally {
+                    state.isProcessing = false;
+                    state.isSending = false;
+                    // updateStatus('Ready');
+                    console.log('Ready');
+                    elements.processingIndicator.style.display = 'none';
+                    if (state.isConversationMode && !state.isAISpeaking) {
+                        startListening();
                     }
                 }
-
-                console.log('Queueing audio for response:', response.response);
-            } catch (error) {
-                console.error(`Error getting AI response:`, error);
-                updateStatus('Error: ' + error.message);
-                addMessageToChat('error', `Error: ${error.message}`);
-            } finally {
-                state.isProcessing = false;
-                state.isSending = false;
-                // updateStatus('Ready');
-                console.log('Ready');
-                elements.processingIndicator.style.display = 'none';
-                if (state.isConversationMode && !state.isAISpeaking) {
-                    startListening();
-                }
+            }
+        } catch (error) {
+            console.error('Error in sendMessage:', error);
+            addMessageToChat('error', 'Error: ' + error.message);
+        } finally {
+            elements.userInput.value = '';
+            elements.userInput.placeholder = "Type a message...";
+            state.isProcessing = false;
+            state.isSending = false;
+            console.log('Ready');
+            // updateStatus('Ready');
+            elements.processingIndicator.style.display = 'none';
+            if (state.isConversationMode && !state.isAISpeaking) {
+                startListening();
             }
         }
     } catch (error) {
-        console.error('Error in sendMessage:', error);
-        addMessageToChat('error', 'Error: ' + error.message);
-    } finally {
-        elements.userInput.value = '';
-        elements.userInput.placeholder = "Type a message...";
-        state.isProcessing = false;
-        state.isSending = false;
-        console.log('Ready');
-        // updateStatus('Ready');
-        elements.processingIndicator.style.display = 'none';
-        if (state.isConversationMode && !state.isAISpeaking) {
-            startListening();
-        }
+        console.error('Error in greeting:', error);
     }
 }
 
@@ -1300,17 +1427,24 @@ async function getAIResponse(message, selectedModel, history, systemPrompt, sess
 
 // Add message to chat function
 function addMessageToChat(role, content, options = {}) {
-    if (role === 'assistant') {
-        console.log('AI Response:', {
-            content,
-            type: options.type,
-            timestamp: new Date().toISOString()
-        });
-    }
-
     // Create message container
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
+
+    // Add special classes for greeting and exit messages
+    if (options.type === 'greeting') {
+        messageDiv.classList.add('greeting-bubble');
+    } else if (options.type === 'exit') {
+        messageDiv.classList.add('exit-bubble');
+    }
+
+    // Set data attributes
+    if (options.type) {
+        messageDiv.setAttribute('data-type', options.type);
+    }
+    if (options.messageType) {
+        messageDiv.setAttribute('data-message-type', options.messageType);
+    }
 
     // Create content container
     const contentDiv = document.createElement('div');
@@ -1320,10 +1454,8 @@ function addMessageToChat(role, content, options = {}) {
     if (options.type === 'bing-search' ||
         content.includes('# Web Results') ||
         content.includes('# News Results') ||
-        options.type === 'greeting' ||
-        content.includes('<div class="joke-list">') ||
-        content.includes('<div class="youtube-results">') ||  // Add this line
-        options.type === 'youtube-list') {                    // Add this line
+        options.type === 'youtube-list' ||
+        content.includes('<div class="youtube-results">')) {
         contentDiv.innerHTML = content;
     } else {
         contentDiv.textContent = content;
@@ -1448,51 +1580,41 @@ function isAIGreetingResponse(text) {
 
 // Exit conversation function
 async function exitConversation(isTimeout = false) {
-    console.log(`Exiting conversation. Timeout: ${isTimeout}`);
-
     try {
-        // Stop any ongoing processes
-        if (state.isListening) {
-            stopListening();
-        }
-        if (state.isAISpeaking) {
-            stopAudioPlayback();
-        }
+        // Stop listening first
+        stopListening();
 
-        // Clear any existing timers
-        clearInactivityTimer();
+        // Add user's exit message
+        addMessageToChat('user', 'exit');
 
-        const exitMessage = isTimeout
-            ? MESSAGES.CLOSINGS.TIMEOUT(INTERVAL)
-            : MESSAGES.CLOSINGS.EXIT;
+        // Create exit message with special styling
+        const exitMessage = MESSAGES.CLOSINGS.EXIT;
+        addMessageToChat('assistant', exitMessage, {
+            type: 'exit',
+            messageType: 'exit'
+        });
 
-        // Use addMessageToChat with 'exit' message type
-        const messageElement = addMessageToChat('assistant', exitMessage, null, 'exit');
-        messageElement.classList.add('exit-bubble');
+        // Queue the exit message audio
+        await queueAudioChunk(exitMessage);
 
-        // Queue the exit message for speech as a single chunk
-        console.log('Queueing complete exit message for speech');
-        state.isAISpeaking = true;
-        updateStatus(MESSAGES.STATUS.SPEAKING);
-        elements.stopAudioButton.style.display = 'inline-block';
-
-        // Queue the entire message as one piece
-        state.audioQueue = [exitMessage];
-        if (!state.isPlaying) {
-            await playNextInQueue();
-        }
-
-        // Reset conversation mode
-        elements.conversationModeToggle.checked = false;
+        // Reset conversation mode and update UI
         state.isConversationMode = false;
+        elements.conversationModeToggle.checked = false;
         elements.conversationStatus.innerHTML = '';
+        updateStatus(MESSAGES.STATUS.DEFAULT);
+
+        // Clear any pending timers
+        if (state.inactivityTimer) {
+            clearTimeout(state.inactivityTimer);
+            state.inactivityTimer = null;
+        }
 
     } catch (error) {
         console.error('Error in exitConversation:', error);
-        stopListening();
-        elements.conversationModeToggle.checked = false;
-        state.isConversationMode = false;
-        updateStatus(MESSAGES.ERRORS.EXIT);
+        addMessageToChat('system', MESSAGES.ERRORS.EXIT);
+    } finally {
+        state.isAISpeaking = false;
+        elements.stopAudioButton.style.display = 'none';
     }
 }
 
@@ -1998,31 +2120,54 @@ async function playNextInQueue() {
 
 // Inactivity timeout function
 function startInactivityTimer() {
-    clearInactivityTimer();
+    console.log('Starting inactivity timer for', INTERVAL, 'minute(s)');
 
-    if (state.isConversationMode) {
-        console.log(`Starting inactivity timer for ${INTERVAL} minute(s)`);
-        state.inactivityTimer = setTimeout(() => {
-            if (state.isConversationMode) {
-                console.log('Inactivity timeout reached');
-                exitConversation(true);
-            }
-        }, CONVERSATION_INACTIVITY_TIMEOUT);
-
-        // Add debug logging
-        console.log('Timer set:', {
-            interval: INTERVAL,
-            timeout: CONVERSATION_INACTIVITY_TIMEOUT,
-            currentTime: new Date().toISOString(),
-            willTriggerAt: new Date(Date.now() + CONVERSATION_INACTIVITY_TIMEOUT).toISOString()
-        });
+    // Clear any existing timer
+    if (state.inactivityTimer) {
+        clearTimeout(state.inactivityTimer);
     }
+
+    // Set new timer
+    state.inactivityTimer = setTimeout(async () => {
+        console.log('Inactivity timeout reached');
+
+        // Stop listening
+        stopListening();
+
+        // Create timeout message
+        const timeoutMessage = MESSAGES.CLOSINGS.TIMEOUT(INTERVAL);
+        addMessageToChat('assistant', timeoutMessage, {
+            type: 'exit',
+            messageType: 'exit'
+        });
+
+        // Queue the timeout message audio
+        await queueAudioChunk(timeoutMessage);
+
+        // Reset conversation mode
+        state.isConversationMode = false;
+        elements.conversationModeToggle.checked = false;
+        elements.conversationStatus.innerHTML = '';
+        updateStatus(MESSAGES.STATUS.DEFAULT);
+
+        // Clear the timer reference
+        state.inactivityTimer = null;
+
+    }, CONVERSATION_INACTIVITY_TIMEOUT);
+
+    // Log timer details
+    console.log('Timer set:', {
+        interval: INTERVAL,
+        timeout: CONVERSATION_INACTIVITY_TIMEOUT,
+        currentTime: new Date().toISOString(),
+        willTriggerAt: new Date(Date.now() + CONVERSATION_INACTIVITY_TIMEOUT).toISOString()
+    });
 }
 
 // Clear inactivity timer function
 function clearInactivityTimer() {
+    console.log('Clearing inactivity timer');
     if (state.inactivityTimer) {
-        console.log('Clearing inactivity timer');
         clearTimeout(state.inactivityTimer);
         state.inactivityTimer = null;
     }
@@ -2459,26 +2604,25 @@ function handleSpeechResult(event) {
     if (!result.isFinal) return;
 
     const transcript = result[0].transcript.trim();
+    const confidence = result[0].confidence;
     console.log('Speech recognition result:', {
         transcript,
-        confidence: result[0].confidence,
+        confidence,
         timestamp: new Date().toISOString()
     });
 
-    // Check for exit or quit commands
-    if ((transcript.toLowerCase() === 'exit' || transcript.toLowerCase() === 'quit') && state.isConversationMode) {
-        console.log('Exit command detected');
-        addMessageToChat('user', transcript);  // Add user's exit command to chat
-        exitConversation(false);  // false indicates this is a manual exit, not a timeout
+    // Check for exit command first
+    if (transcript.toLowerCase() === 'exit') {
+        exitConversation();
         return;
     }
 
-    if (transcript) {
-        elements.userInput.value = transcript;
-        sendMessage(transcript);
-    }
-    state.lastAudioInput = Date.now();
-    startInactivityTimer();
+    // Check if it's a greeting
+    const isGreeting = getPatterns().greetings.some(pattern =>
+        pattern.test(transcript.toLowerCase())
+    );
+
+    sendMessage(transcript, isGreeting);
 }
 
 // Add helper function to handle responses consistently
@@ -3307,33 +3451,27 @@ const handleMyJokes = {
             state.isAISpeaking = true;
             elements.stopAudioButton.style.display = 'block';
 
-            // Get the persistent sessionId from localStorage
-            const persistentSessionId = localStorage.getItem('persistentSessionId');
+            // Get the persistent sessionId
+            const persistentSessionId = window.sessionId;
 
-            console.log('\n━━━━━━ List Jokes Request ━━━━━━');
-            console.log('Session details:', {
+            console.log('List jokes request:', {
                 showAll,
-                persistentSessionId,
-                windowSessionId: window.sessionId,
-                localStorage: localStorage.getItem('persistentSessionId')
+                persistentSessionId
             });
 
             // Construct URL with proper query parameters
-            let url;
-            if (showAll) {
-                url = '/api/jokes/list?view=all';
-                console.log('Using all jokes URL:', url);
-            } else {
-                url = `/api/jokes/list?userId=${encodeURIComponent(persistentSessionId)}`;
-                console.log('Using personal jokes URL:', url);
-            }
+            const url = showAll ?
+                '/api/jokes/list?view=all' :
+                `/api/jokes/list?userId=${encodeURIComponent(persistentSessionId)}`;
 
             const response = await fetch(url);
             const data = await response.json();
 
             if (data.success && data.jokes.length > 0) {
-                // Create header message
-                const headerMessage = showAll ? "Here is a listing of ALL jokes:" : "Here is a listing of YOUR jokes:";
+                const headerMessage = showAll ?
+                    "Here is a listing of ALL jokes:" :
+                    "Here is a listing of YOUR jokes:";
+
                 addMessageToChat('assistant', headerMessage);
                 await queueAudioChunk(headerMessage);
 
@@ -3350,7 +3488,9 @@ const handleMyJokes = {
                 ).join('\n');
                 await queueAudioChunk(jokesText);
             } else {
-                const message = showAll ? "There are no jokes saved yet." : "You don't have any saved jokes yet.";
+                const message = showAll ?
+                    "There are no jokes saved yet." :
+                    "You don't have any saved jokes yet.";
                 addMessageToChat('assistant', message);
                 await queueAudioChunk(message);
             }
@@ -3364,10 +3504,6 @@ const handleMyJokes = {
             elements.stopAudioButton.style.display = 'none';
             if (state.isConversationMode) {
                 updateStatus(MESSAGES.STATUS.LISTENING);
-                console.log('Continuing conversation after joke list:', {
-                    isConversationMode: state.isConversationMode,
-                    isListening: state.isListening
-                });
             }
         }
     },
@@ -3688,8 +3824,6 @@ const handleYoutube = {
         }
     }
 };
-
-
 
 // =====================================================
 // END OF app.js FILE v20.0.0
