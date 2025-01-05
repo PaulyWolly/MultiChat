@@ -18,14 +18,14 @@ const axios            = require('axios');
 const mongoose         = require('mongoose');
 const { google }       = require('googleapis');
 
-// Initialize YouTube API
-const youtube = google.youtube({
-    version: 'v3',
-    auth: process.env.YOUTUBE_API_KEY
-});
-
 // Load environment variables FIRST
 dotenv.config();
+
+// Initialize YouTube API AFTER loading env vars
+const youtube = google.youtube({
+    version: 'v3',
+    auth: process.env.GOOGLE_API_KEY
+});
 
 // Initialize OpenAI
 const openai = new OpenAI({
@@ -1824,10 +1824,23 @@ app.post('/api/youtube/search', async (req, res) => {
         const { query, type = 'search' } = req.body;
         console.log('YouTube search request:', { query, type });
 
+        // Check if API key exists
+        if (!process.env.GOOGLE_API_KEY) {
+            console.error('Google API key is missing in environment variables');
+            throw new Error('Google API key is not configured');
+        }
+
+        // Log the API key presence (safely)
+        console.log('Google API key status:', {
+            exists: !!process.env.GOOGLE_API_KEY,
+            length: process.env.GOOGLE_API_KEY?.length,
+            prefix: process.env.GOOGLE_API_KEY?.substring(0, 5) + '...'
+        });
+
         if (type === 'search') {
             // First get the video IDs
             const searchResponse = await youtube.search.list({
-                auth: process.env.YOUTUBE_API_KEY,
+                auth: process.env.GOOGLE_API_KEY,
                 part: ['snippet'],
                 q: query,
                 maxResults: 10,
@@ -1839,14 +1852,9 @@ app.post('/api/youtube/search', async (req, res) => {
             console.log('Fetching full details for videos:', videoIds);
 
             const videoDetails = await youtube.videos.list({
-                auth: process.env.YOUTUBE_API_KEY,
+                auth: process.env.GOOGLE_API_KEY,
                 part: ['snippet', 'contentDetails'],
                 id: videoIds.join(',')
-            });
-
-            console.log('Video details response:', {
-                itemCount: videoDetails.data.items.length,
-                sampleDescription: videoDetails.data.items[0]?.snippet?.description
             });
 
             const videos = videoDetails.data.items.map(video => ({
@@ -1858,17 +1866,11 @@ app.post('/api/youtube/search', async (req, res) => {
                 duration: video.contentDetails.duration
             }));
 
-            console.log('Processed videos:', videos.map(v => ({
-                title: v.title,
-                descriptionLength: v.description?.length,
-                descriptionPreview: v.description?.substring(0, 100) + '...'
-            })));
-
             res.json({ success: true, videos });
         } else if (type === 'play') {
             // Handle single video playback
             const searchResponse = await youtube.search.list({
-                auth: process.env.YOUTUBE_API_KEY,
+                auth: process.env.GOOGLE_API_KEY,
                 part: ['snippet'],
                 q: query,
                 maxResults: 1,

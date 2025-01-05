@@ -311,8 +311,8 @@ function getPatterns() {
         youtube: {
             // Match any query that starts with youtube or contains youtube search
             searchVideos: /(^youtube|youtube search|search youtube|search on youtube)/i,
-            // Only match explicit play requests
-            playVideo: /^play.*youtube/i
+            // Match any play request that includes youtube
+            playVideo: /(^play|youtube play|play.*youtube|youtube.*play)/i  // Updated pattern
         }
     };
 }
@@ -644,6 +644,13 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 async function sendMessage(message = null) {
     const messageText = message || elements.userInput.value.trim();
     const startTime = Date.now();
+
+    // Check for YouTube request
+    const patterns = getPatterns();
+    if (patterns.youtube.searchVideos.test(messageText) || patterns.youtube.playVideo.test(messageText)) {
+        await handleYoutube.handleYoutubeRequest(messageText);
+        return;
+    }
 
     // First, check if this is a web search request
     const isWebSearch = messageText.toLowerCase().match(/^(show me |do |get |find )?(a |the )?(web |bing |internet )?search for (.*)/i);
@@ -1292,65 +1299,32 @@ async function getAIResponse(message, selectedModel, history, systemPrompt, sess
 }
 
 // Add message to chat function
-function addMessageToChat(role, content, imageUrl = null, type = null) {
+function addMessageToChat(role, content, options = {}) {
     if (role === 'assistant') {
         console.log('AI Response:', {
             content,
-            type,
+            type: options.type,
             timestamp: new Date().toISOString()
         });
-
-        // Check if response contains "relieved"
-        if (content.toLowerCase().includes('relieved')) {
-            console.warn('Found "relieved" in AI response:', content);
-        }
     }
 
+    // Create message container
     const messageDiv = document.createElement('div');
-    let classList = ['message', role];
+    messageDiv.className = `message ${role}`;
 
-    if (type === 'greeting') {
-        classList.push('greeting-bubble');
-    } else if (type === 'exit') {
-        classList.push('exit-bubble');
-    } else if (type === 'system' || type === 'time' || type === 'date' || type === 'datetime') {
-        classList.push('system-bubble');
-    }
-    messageDiv.className = classList.join(' ');
-
-    // Only add metadata for regular assistant messages
-    if (role === 'assistant' && !type) {  // No metadata for greeting/exit/system/time/date/datetime
-        const metadataDiv = document.createElement('div');
-        metadataDiv.className = 'metadata';
-        messageDiv.appendChild(metadataDiv);
-    }
-
+    // Create content container
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
 
-    // Check if this is a recipe message
-    if (role === 'assistant' && isRecipe(content)) {
-        // Create print icon
-        const printIcon = document.createElement('span');
-        printIcon.innerHTML = '🖨️';  // Printer emoji
-        printIcon.className = 'print-icon';
-        printIcon.style.cursor = 'pointer';
-        printIcon.style.marginLeft = '10px';
-        printIcon.title = 'Print Recipe';
-
-        // Add click handler for printing
-        printIcon.addEventListener('click', () => {
-            window.printRecipe(content, messageDiv);
-        });
-
-        // Add the print icon to the message
-        contentDiv.appendChild(printIcon);
-    }
-
-    // Check if this is a Bing search result and use marked for rendering
-    if (type === 'bing-search' || content.includes('# Web Results') || content.includes('# News Results')) {
-        contentDiv.innerHTML = marked.parse(content);
-        contentDiv.classList.add('search-results');
+    // Handle different content types
+    if (options.type === 'bing-search' ||
+        content.includes('# Web Results') ||
+        content.includes('# News Results') ||
+        options.type === 'greeting' ||
+        content.includes('<div class="joke-list">') ||
+        content.includes('<div class="youtube-results">') ||  // Add this line
+        options.type === 'youtube-list') {                    // Add this line
+        contentDiv.innerHTML = content;
     } else {
         contentDiv.textContent = content;
     }
@@ -2847,6 +2821,724 @@ function extractRelatedTerms(text) {
 
 
 // =====================================================
+// JOKE HANDLING
+// =====================================================
+
+// joke prompt
+const JOKE_PROMPT = `You are a helpful assistant who tells jokes.
+
+When asked for a joke:
+1. Provide a short, one-line joke that hasn't been told before
+2. Keep it clean and family-friendly
+3. Make it concise and easy to understand
+4. No markdown or special formatting
+`;
+
+// Joke handling module
+const handleMyJokes = {
+    state: {
+        isRecording: false,
+        currentTitle: '',
+        currentContent: '',
+    },
+
+    // Initialize joke handling
+    init() {
+        // Reset state
+        this.resetState();
+        // Any other initialization needed
+    },
+
+    // Reset state
+    resetState() {
+        this.state.isRecording = false;
+        this.state.currentTitle = '';
+        this.state.currentContent = '';
+    },
+
+    // Handle incoming messages
+    async handleJokeRequest(messageText) {
+        console.log('handleJokeRequest received:', messageText);
+
+        // Get patterns first
+        const patterns = getPatterns();
+        console.log('Checking message against patterns');
+
+        // If we're in any joke recording state, handle only joke-related responses
+        if (this.state.isRecording) {
+            console.log('In joke recording state:', this.state.isRecording);
+
+            if (this.state.isRecording === 'waiting_for_title') {
+                this.state.currentTitle = messageText;
+                const confirmMessage = `Your joke will be titled "${messageText}". Is this correct? Say YES or NO.`;
+                addMessageToChat('assistant', confirmMessage);
+                await queueAudioChunk(confirmMessage);  // Use queueAudioChunk instead
+                this.state.isRecording = 'confirming_title';
+                updateStatus("Waiting for confirmation...");
+                return true;
+            }
+        }
+
+        // Check for list jokes commands using patterns
+        const listJokeMatch = patterns.listJokes.find(pattern => pattern.test(messageText.toLowerCase()));
+        if (listJokeMatch) {
+            console.log('List jokes pattern matched:', listJokeMatch);
+            addMessageToChat('user', messageText);
+            const showAll = messageText.toLowerCase().includes('all jokes');
+            await this.listJokes(showAll);
+            return true;
+        }
+
+        // Check for save joke commands using patterns
+        if (patterns.saveJoke.some(pattern => pattern.test(messageText))) {
+            console.log('Detected save a joke command');
+            addMessageToChat('user', messageText);
+
+            const response = "Okay, what is the name of the joke you want to store?";
+            addMessageToChat('assistant', response);  // Add message to chat first
+
+            await queueAudioChunk(response);  // Use queueAudioChunk for consistent audio
+            this.state.isRecording = 'waiting_for_title';
+            updateStatus("Waiting for joke title...");
+            if (state.isConversationMode) {
+                stopListening();  // Stop listening while waiting for title
+            }
+            return true;
+        }
+
+        if (this.state.isRecording === 'waiting_for_title') {
+            addMessageToChat('user', messageText);
+            this.state.pendingTitle = messageText;
+            const confirmMessage = `I heard "${messageText}". Is this the correct name for your joke? Say YES or NO.`;
+            addMessageToChat('assistant', confirmMessage);  // Add message to chat first
+            await speak(confirmMessage);  // Then speak it
+            this.state.isRecording = 'confirming_title';
+            updateStatus("Waiting for confirmation...");
+            return true;
+        }
+
+        if (this.state.isRecording === 'confirming_title') {
+            addMessageToChat('user', messageText);
+            if (messageText.toLowerCase() === 'yes') {
+                this.state.currentTitle = this.state.pendingTitle;
+                const startMessage = "Okay, start telling your joke. Say COMPLETE when you're finished.";
+                addMessageToChat('assistant', startMessage);  // Add message to chat first
+                await speak(startMessage);  // Then speak it
+                this.state.isRecording = 'recording';
+                updateStatus("Recording your joke...");
+            } else if (messageText.toLowerCase() === 'no') {
+                const retryMessage = "Okay, what is the name of your joke?";
+                addMessageToChat('assistant', retryMessage);  // Add message to chat first
+                await speak(retryMessage);  // Then speak it
+                this.state.isRecording = 'waiting_for_title';
+                updateStatus("Waiting for joke title...");
+            }
+            return true;
+        }
+
+        if (this.state.isRecording === 'recording') {
+            // If we're recording and the message isn't COMPLETE, just collect it
+            if (messageText.toUpperCase() !== 'COMPLETE') {
+                // Handle special pause commands for spoken jokes
+                const pauseWords = ['PAUSE', 'WAIT', 'AHEM'];
+                if (pauseWords.some(word => messageText.toUpperCase().includes(word))) {
+                    this.state.currentContent += '... ';
+                    return true;
+                }
+
+                // Add the new text to current content
+                this.state.currentContent += messageText + ' ';
+                addMessageToChat('user', messageText);
+                return true;
+            }
+
+            // Only process COMPLETE when user is done telling the joke
+            if (messageText.toUpperCase() === 'COMPLETE') {
+                if (!this.state.currentContent.trim()) {
+                    const errorMessage = "Your joke seems to be empty. Please tell your joke before saying COMPLETE.";
+                    addMessageToChat('assistant', errorMessage);
+                    await queueAudioChunk(errorMessage);
+                    return true;
+                }
+                addMessageToChat('user', 'COMPLETE');
+                updateStatus("Saving your joke...");
+                await this.saveJoke();
+                this.resetState();
+                if (state.isConversationMode) {
+                    updateStatus("Listening...");
+                } else {
+                    updateStatus(MESSAGES.STATUS.DEFAULT);
+                }
+                return true;
+            }
+
+            if (state.isConversationMode) {
+                console.log('Restarting listening after joke handling');
+                setTimeout(() => {
+                    if (!state.isAISpeaking && !state.isProcessing) {
+                        startListening();
+                        updateStatus(MESSAGES.STATUS.LISTENING);
+                    }
+                }, 1000);
+            }
+
+            return true;
+        }
+
+        // Replace the existing joke retrieval section with this updated version
+        if (messageText.toLowerCase().includes('tell me my joke about')) {
+            try {
+                console.log('Joke retrieval request detected');
+                addMessageToChat('user', messageText);
+
+                // Extract the joke title more accurately
+                const jokeTitle = messageText
+                    .toLowerCase()
+                    .replace('tell me my joke about', '')
+                    .trim();
+
+                console.log('Searching for joke with title:', jokeTitle);
+
+                // Temporarily stop listening while retrieving
+                if (state.isConversationMode) {
+                    stopListening();
+                }
+
+                await this.retrieveJoke(jokeTitle);
+
+                // Restore conversation mode after a short delay
+                if (state.isConversationMode) {
+                    setTimeout(() => {
+                        if (!state.isAISpeaking && !state.isProcessing) {
+                            console.log('Restoring conversation mode after joke retrieval');
+                            startListening();
+                            updateStatus(MESSAGES.STATUS.LISTENING);
+                        }
+                    }, 1000);
+                }
+
+                return true;
+            } catch (error) {
+                console.error('Error in joke retrieval:', error);
+                const errorMessage = "Sorry, there was an error retrieving your joke.";
+                addMessageToChat('assistant', errorMessage);
+                await queueAudioChunk(errorMessage);
+
+                // Ensure conversation mode is restored even on error
+                if (state.isConversationMode) {
+                    setTimeout(() => {
+                        startListening();
+                        updateStatus(MESSAGES.STATUS.LISTENING);
+                    }, 1000);
+                }
+                return true;
+            }
+        }
+
+        if (messageText.toLowerCase() === 'yes' && sessionStorage.getItem('pendingJoke')) {
+            try {
+                let jokeData;
+                try {
+                    jokeData = JSON.parse(sessionStorage.getItem('pendingJoke'));
+                } catch (error) {
+                    console.error('Error parsing stored joke:', error);
+                    throw new Error('Invalid stored joke data');
+                }
+                state.isAISpeaking = true;
+                elements.stopAudioButton.style.display = 'block';
+                addMessageToChat('assistant', jokeData.content);
+                await queueAudioChunk(jokeData.content);
+                sessionStorage.removeItem('pendingJoke');
+            } catch (error) {
+                console.error('Error playing joke:', error);
+            } finally {
+                state.isAISpeaking = false;
+                elements.stopAudioButton.style.display = 'none';
+                if (state.isConversationMode) {
+                    updateStatus(MESSAGES.STATUS.LISTENING);
+                    startListening();
+                }
+            }
+            return true;
+        }
+
+        if (messageText.toLowerCase() === 'no' && sessionStorage.getItem('pendingJoke')) {
+            const response = "Okay, your joke is stored for later retrieval.";
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+            addMessageToChat('assistant', response);
+            await queueAudioChunk(response);
+            sessionStorage.removeItem('pendingJoke');
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            if (state.isConversationMode) {
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                startListening();
+            }
+            return true;
+        }
+
+        if (messageText.toLowerCase().match(/^delete( my)? joke (?:about |called |titled )?(.+)$/i)) {
+            const title = messageText.match(/^delete( my)? joke (?:about |called |titled )?(.+)$/i)[2];
+            addMessageToChat('user', messageText);
+            await this.confirmDelete(title);
+            return true;
+        }
+
+        if (messageText.toLowerCase() === 'yes' && sessionStorage.getItem('pendingDelete')) {
+            const title = sessionStorage.getItem('pendingDelete');
+            await this.deleteJoke(title);
+            sessionStorage.removeItem('pendingDelete');
+            return true;
+        }
+
+        if (messageText.toLowerCase() === 'no' && sessionStorage.getItem('pendingDelete')) {
+            const message = "Okay, I won't delete the joke.";
+            addMessageToChat('assistant', message);
+            await queueAudioChunk(message);
+            sessionStorage.removeItem('pendingDelete');
+            return true;
+        }
+
+        if (messageText.toLowerCase().match(/^update( my)? joke (?:about |called |titled )?(.+)$/i)) {
+            const title = messageText.match(/^update( my)? joke (?:about |called |titled )?(.+)$/i)[2];
+            addMessageToChat('user', messageText);
+            this.state.isRecording = 'updating';
+            this.state.currentTitle = title;
+            speak("Okay, tell me the new version of your joke. Say COMPLETE when done");
+            updateStatus("Recording updated joke...");
+            this.state.currentContent = '';
+            return true;
+        }
+
+        if (this.state.isRecording === 'updating') {
+            if (messageText.toUpperCase() === 'COMPLETE') {
+                if (!this.state.currentContent.trim()) {
+                    const errorMessage = "The updated joke seems to be empty. Please tell the joke before saying COMPLETE.";
+                    addMessageToChat('assistant', errorMessage);
+                    await queueAudioChunk(errorMessage);
+                    return true;
+                }
+                addMessageToChat('user', messageText);
+                await this.updateJoke(this.state.currentTitle, this.state.currentContent);
+                this.resetState();
+                return true;
+            }
+            this.state.currentContent += messageText + ' ';
+            addMessageToChat('user', messageText);
+            return true;
+        }
+
+        if (messageText.toLowerCase().includes('search for') ||
+            messageText.toLowerCase().includes('look up')) {
+            try {
+                const query = messageText.replace(/search for|look up/i, '').trim();
+                const response = await fetch('/api/bing-search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ query })
+                });
+
+                const data = await response.json();
+                addMessageToChat('assistant', data.response);
+                return;
+            } catch (error) {
+                console.error('Search error:', error);
+            }
+        }
+
+        if (messageText.toLowerCase().match(/^search( my)? jokes? (?:for |about |containing )?(.+)$/i)) {
+            const searchTerm = messageText.match(/^search( my)? jokes? (?:for |about |containing )?(.+)$/i)[2];
+            addMessageToChat('user', messageText);
+            await this.searchJokes(searchTerm);
+            return true;
+        }
+
+        if (messageText.toLowerCase().match(/^delete joke id (\w+)$/i)) {
+            const id = messageText.match(/^delete joke id (\w+)$/i)[1];
+            addMessageToChat('user', messageText);
+            const message = `Are you sure you want to delete joke with ID: ${id}? Say YES to confirm or NO to cancel.`;
+            addMessageToChat('assistant', message);
+            await queueAudioChunk(message);
+            sessionStorage.setItem('pendingDelete', id);
+            return true;
+        }
+
+        // // For regular joke requests
+        // if (messageText.toLowerCase().includes('tell me a joke')) {
+        //     addMessageToChat('user', messageText);
+        //     state.isProcessing = true;
+        //     state.isAISpeaking = false;
+        //     updateStatus(MESSAGES.STATUS.PROCESSING);
+
+        //     try {
+        //         const response = await fetch('/api/chat', {
+        //             method: 'POST',
+        //             headers: { 'Content-Type': 'application/json' },
+        //             body: JSON.stringify({
+        //                 message: messageText,
+        //                 history: [],
+        //                 model: state.selectedModel,
+        //                 systemPrompt: JOKE_PROMPT,   // Use the shorter joke-specific prompt
+        //                 session: window.sessionId,
+        //                 timezone: state.userTimezone
+        //             })
+        //         });
+
+        //         if (!response.ok) throw new Error('Network response was not ok');
+
+        //         // Reset states after response
+        //         state.isProcessing = false;
+        //         if (state.isConversationMode) {
+        //             updateStatus(MESSAGES.STATUS.LISTENING);
+        //             startListening();
+        //         } else {
+        //             updateStatus(MESSAGES.STATUS.DEFAULT);
+        //         }
+        //         return true;
+        //     } catch (error) {
+        //         console.error('Error in joke request:', error);
+        //         // Reset states on error
+        //         state.isProcessing = false;
+        //         state.isAISpeaking = false;
+        //         if (state.isConversationMode) {
+        //             updateStatus(MESSAGES.STATUS.LISTENING);
+        //             startListening();
+        //         } else {
+        //             updateStatus(MESSAGES.STATUS.DEFAULT);
+        //         }
+        //         return false;
+        //     }
+        // }
+
+        return false; // Message wasn't joke-related
+    },
+
+    // Save joke to database
+    async saveJoke() {
+        try {
+            const response = await fetch('/api/jokes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    title: this.state.currentTitle,
+                    content: this.state.currentContent,
+                    userId: window.sessionId  // Uses the persistent sessionId
+                })
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                const successMessage = `Great! I've saved your joke. To hear it later, just say 'tell me my joke about ${this.state.currentTitle}'`;
+                addMessageToChat('assistant', successMessage);
+                await queueAudioChunk(successMessage);
+            } else {
+                const errorMessage = "Sorry, I couldn't save your joke. Please try again.";
+                addMessageToChat('assistant', errorMessage);
+                await queueAudioChunk(errorMessage);
+            }
+        } catch (error) {
+            console.error('Error saving joke:', error);
+            const errorMessage = "Sorry, there was an error saving your joke.";
+            addMessageToChat('assistant', errorMessage);
+            await queueAudioChunk(errorMessage);
+        } finally {
+            if (state.isConversationMode) {
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                setTimeout(() => {  // Add delay before starting to listen again
+                    startListening();
+                }, 1000);
+            }
+        }
+    },
+
+    // Retrieve joke from database
+    async retrieveJoke(title) {
+        try {
+            console.log('Retrieving joke:', title);
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+
+            const response = await fetch(`${SERVER_URL}/api/jokes/${encodeURIComponent(title)}?sessionId=${window.sessionId}`);
+            const data = await response.json();
+
+            console.log('Joke retrieval response:', data);
+
+            if (data.success && data.joke) {
+                const confirmMessage = "I found your joke. Would you like to hear it?";
+                addMessageToChat('assistant', confirmMessage);
+                await queueAudioChunk(confirmMessage);
+                sessionStorage.setItem('pendingJoke', JSON.stringify(data.joke));
+            } else {
+                const notFoundMessage = "Sorry, I couldn't find a joke with that title.";
+                addMessageToChat('assistant', notFoundMessage);
+                await queueAudioChunk(notFoundMessage);
+            }
+        } catch (error) {
+            console.error('Error retrieving joke:', error);
+            const errorMessage = "Sorry, there was an error retrieving your joke.";
+            addMessageToChat('assistant', errorMessage);
+            await queueAudioChunk(errorMessage);
+        } finally {
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+
+            // Ensure conversation mode is properly restored
+            if (state.isConversationMode) {
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                startListening();
+            }
+        }
+    },
+
+    // Cleanup method
+    cleanup() {
+        this.resetState();
+        sessionStorage.removeItem('pendingJoke');
+    },
+
+    // Add this new method to handleMyJokes
+    async listJokes(showAll = false) {
+        try {
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+
+            // Get the persistent sessionId from localStorage
+            const persistentSessionId = localStorage.getItem('persistentSessionId');
+
+            console.log('\n━━━━━━ List Jokes Request ━━━━━━');
+            console.log('Session details:', {
+                showAll,
+                persistentSessionId,
+                windowSessionId: window.sessionId,
+                localStorage: localStorage.getItem('persistentSessionId')
+            });
+
+            // Construct URL with proper query parameters
+            let url;
+            if (showAll) {
+                url = '/api/jokes/list?view=all';
+                console.log('Using all jokes URL:', url);
+            } else {
+                url = `/api/jokes/list?userId=${encodeURIComponent(persistentSessionId)}`;
+                console.log('Using personal jokes URL:', url);
+            }
+
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.success && data.jokes.length > 0) {
+                // Create header message
+                const headerMessage = showAll ? "Here is a listing of ALL jokes:" : "Here is a listing of YOUR jokes:";
+                addMessageToChat('assistant', headerMessage);
+                await queueAudioChunk(headerMessage);
+
+                // Format and display jokes
+                const formattedJokes = data.jokes.map((joke, index) => ({
+                    number: index + 1,
+                    text: `"${joke.title}" (ID: ${joke._id})`
+                }));
+                displayJokes(formattedJokes);
+
+                // Create speech text for jokes
+                const jokesText = formattedJokes.map(joke =>
+                    `${joke.number}. ${joke.text}`
+                ).join('\n');
+                await queueAudioChunk(jokesText);
+            } else {
+                const message = showAll ? "There are no jokes saved yet." : "You don't have any saved jokes yet.";
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            }
+        } catch (error) {
+            console.error('Error listing jokes:', error);
+            const errorMessage = "Sorry, there was an error retrieving your jokes.";
+            addMessageToChat('assistant', errorMessage);
+            await queueAudioChunk(errorMessage);
+        } finally {
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            if (state.isConversationMode) {
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                console.log('Continuing conversation after joke list:', {
+                    isConversationMode: state.isConversationMode,
+                    isListening: state.isListening
+                });
+            }
+        }
+    },
+
+    // Add this new method to handleMyJokes
+    async deleteJoke(title) {
+        try {
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+            // First get the joke to get its ID
+            const getResponse = await fetch(`/api/jokes/${encodeURIComponent(title)}`);
+            const getData = await getResponse.json();
+
+            if (!getData.success) {
+                throw new Error('Joke not found');
+            }
+
+            // Then delete using the ID
+            const response = await fetch(
+                `/api/jokes/${getData.joke.id}`,
+                {
+                    method: 'DELETE'
+                }
+            );
+            const data = await response.json();
+
+            if (data.success) {
+                const message = `I've deleted your joke "${title}"`;
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            } else {
+                const message = "Sorry, I couldn't find that joke to delete.";
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            }
+        } catch (error) {
+            console.error('Error deleting joke:', error);
+            const errorMessage = "Sorry, there was an error deleting your joke.";
+            addMessageToChat('assistant', errorMessage);
+            await queueAudioChunk(errorMessage);
+        } finally {
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            if (state.isConversationMode) {
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                startListening();
+            }
+        }
+    },
+
+    // Add to handleMyJokes module
+    async confirmDelete(title) {
+        const message = `Are you sure you want to delete your joke "${title}"? Say YES to confirm or NO to cancel.`;
+        addMessageToChat('assistant', message);
+        await queueAudioChunk(message);
+        sessionStorage.setItem('pendingDelete', title);
+        return true;
+    },
+
+    // Add to handleMyJokes module
+    async updateJoke(title, newContent) {
+        try {
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+            const response = await fetch(`/api/jokes/${encodeURIComponent(title)}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    content: newContent,
+                    userId: window.sessionId
+                })
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                const message = `I've updated your joke "${title}"`;
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            } else {
+                const message = "Sorry, I couldn't find that joke to update.";
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            }
+        } catch (error) {
+            console.error('Error updating joke:', error);
+            const errorMessage = "Sorry, there was an error updating your joke.";
+            addMessageToChat('assistant', errorMessage);
+            await queueAudioChunk(errorMessage);
+        } finally {
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            if (state.isConversationMode) {
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                startListening();
+            }
+        }
+    },
+
+    // Add to handleMyJokes module
+    async searchJokes(searchTerm) {
+        try {
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+            const response = await fetch(`/api/jokes/search?term=${encodeURIComponent(searchTerm)}`);
+            const data = await response.json();
+
+            if (data.success && data.jokes.length > 0) {
+                const message = `I found ${data.jokes.length} joke${data.jokes.length > 1 ? 's' : ''} containing "${searchTerm}". Would you like to hear them?`;
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+                sessionStorage.setItem('searchResults', JSON.stringify(data.jokes));
+            } else {
+                const message = `I couldn't find any jokes containing "${searchTerm}".`;
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            }
+        } catch (error) {
+            console.error('Error searching jokes:', error);
+            const errorMessage = "Sorry, there was an error searching your jokes.";
+            addMessageToChat('assistant', errorMessage);
+            await queueAudioChunk(errorMessage);
+        } finally {
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            if (state.isConversationMode) {
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                startListening();
+            }
+        }
+    }
+};
+
+// Display jokes function
+function displayJokes(jokes) {
+    const jokeList = document.createElement('div');
+    jokeList.className = 'joke-list';
+
+    jokes.forEach(joke => {
+        const jokeItem = document.createElement('div');
+        jokeItem.className = 'joke-item';
+        jokeItem.innerHTML = `
+            <span class="joke-number">${joke.number}.</span>
+            <span class="joke-text">${joke.text}</span>
+        `;
+        jokeList.appendChild(jokeItem);
+    });
+
+    addMessageToChat('system', jokeList.outerHTML);
+}
+
+// Add migration function
+async function migrateJokes(fromUserId, toUserId) {
+    try {
+        const response = await fetch('/api/jokes/migrate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ fromUserId, toUserId })
+        });
+        const data = await response.json();
+        console.log('Joke migration result:', data);
+    } catch (error) {
+        console.error('Error migrating jokes:', error);
+    }
+}
+
+
+// =====================================================
 // YOUTUBE MODULE
 // =====================================================
 
@@ -2856,6 +3548,9 @@ const handleYoutube = {
     async handleYoutubeRequest(messageText) {
         console.log('handleYoutubeRequest received:', messageText);
         const patterns = getPatterns();
+
+        // Add user's message first
+        addMessageToChat('user', messageText);  // Add this line
 
         // Check for play request first
         const isPlay = patterns.youtube.playVideo.test(messageText);
@@ -2887,25 +3582,27 @@ const handleYoutube = {
                 this.showVideo(data.video.id);
                 addMessageToChat('assistant', `Playing: ${data.video.title}`);
             } else if (data.success && data.videos) {
-                const message = `Found these videos about "${query}":\n\n`;
-                const videoList = `
-                    <div class="youtube-results">
-                        <ol class="video-list">
-                            ${data.videos.map(video => `
-                                <li class="video-item">
-                                    <div class="video-title">${video.title}</div>
-                                    <div class="video-controls">
-                                        <a href="#" class="youtube-playHere-link" data-video-id="${video.id}">Play Here</a> |
-                                        <a href="https://www.youtube.com/watch?v=${video.id}" target="_blank" class="youtube-link">YouTube</a>
-                                        <div class="channel-info">By: ${video.channelTitle}</div>
-                                    </div>
-                                </li>
-                            `).join('')}
-                        </ol>
-                    </div>`;
+                const message = `Found these videos about "${query}":`;
+                const videoList = document.createElement('div');
+                videoList.className = 'youtube-results';
+                videoList.innerHTML = `
+                    <ol class="video-list">
+                        ${data.videos.map(video => `
+                            <li class="video-item">
+                                <div class="video-title">${video.title}</div>
+                                <div class="video-controls">
+                                    <a href="#" class="youtube-playHere-link" data-video-id="${video.id}">Play Here</a> |
+                                    <a href="https://www.youtube.com/watch?v=${video.id}" target="_blank" class="youtube-link">YouTube</a>
+                                    <div class="channel-info">By: ${video.channelTitle}</div>
+                                </div>
+                            </li>
+                        `).join('')}
+                    </ol>`;
 
                 // Add message with both text and video list
-                addMessageToChat('assistant', message + '\n' + videoList, {
+                const messageElement = document.createElement('div');
+                messageElement.textContent = message;
+                addMessageToChat('assistant', messageElement.outerHTML + videoList.outerHTML, {
                     type: 'youtube-list',
                     messageType: 'youtube'
                 });
@@ -2995,5 +3692,5 @@ const handleYoutube = {
 
 
 // =====================================================
-// END OF FILE v20.0.0
+// END OF app.js FILE v20.0.0
 // =====================================================

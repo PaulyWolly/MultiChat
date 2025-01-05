@@ -1112,9 +1112,9 @@ button {
     height: 80vh;
     background: rgba(0, 0, 0, 0.9);
     z-index: 1000;
-    padding: 20px;
+    /* padding: 20px;
     border-radius: 10px;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5); */
 }
 
 .youtube-container.hidden {
@@ -1136,6 +1136,7 @@ button {
     color: white;
     font-size: 24px;
     cursor: pointer;
+
     padding: 5px 10px;
     border-radius: 5px;
 }
@@ -1144,38 +1145,12 @@ button {
     background: rgba(255, 255, 255, 0.1);
 }
 
-
-/* .video-list {
-    list-style: decimal;
-    padding-left: 20px;
-}
-
-.video-item {
-    margin-bottom: 10px;
-}
-
-.video-title {
-    font-weight: bold;
-    margin-bottom: 5px;
-}
-
-.video-controls {
-    font-size: 0.9em;
-    color: #666;
-}
-
-.channel-info {
-    font-size: 0.8em;
-    color: #888;
-    margin-top: 3px;
-} */
-
-
 /* ================================= */
 
 /* YouTube Results List */
 .youtube-results {
     margin: 10px 0;
+
     padding: 15px;
     background: #f8f9fa;
     border-radius: 8px;
@@ -1185,6 +1160,7 @@ button {
 .video-list {
     list-style: decimal;
     padding-left: 25px;
+
     margin: 0;
 }
 
