@@ -822,16 +822,64 @@ app.post('/api/datetime', async (req, res) => {
 // JOKE API ENDPOINTS
 // =====================================================
 
-// Save a joke
+// List jokes endpoint (should come before /:title)
+app.get('/api/jokes/list', async (req, res) => {
+    try {
+        const { view, userId } = req.query;
+        console.log('List jokes request:', { view, userId });
+
+        // First check if we need to migrate jokes from old session
+        const oldJokes = await mongoose.connection.collection('my_jokes')
+            .find({ userId: 'session-1736122120855-er7bz6n' })
+            .toArray();
+
+        // If we found jokes with old session ID, migrate them
+        if (oldJokes.length > 0) {
+            console.log('Found old jokes, migrating to new session:', userId);
+            await Promise.all(oldJokes.map(joke =>
+                mongoose.connection.collection('my_jokes').updateOne(
+                    { _id: joke._id },
+                    { $set: { userId: userId } }
+                )
+            ));
+        }
+
+        // Now query with the current session ID
+        let query = view === 'all' ? {} : { userId };
+        console.log('Final MongoDB query:', query);
+
+        const jokes = await mongoose.connection.collection('my_jokes')
+            .find(query)
+            .sort({ dateCreated: -1 })
+            .toArray();
+
+        console.log('Found jokes:', {
+            count: jokes.length,
+            userSpecific: view !== 'all',
+            query,
+            jokes: jokes.map(j => ({ title: j.title, userId: j.userId }))
+        });
+
+        res.json({ success: true, jokes: jokes || [] });
+    } catch (error) {
+        console.error('Error listing jokes:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Save joke endpoint
 app.post('/api/jokes', async (req, res) => {
     try {
         const { title, content, userId } = req.body;
+        console.log('Save joke request:', { title, userId });
+
         const joke = new Joke({
             title,
             content,
             userId,
             dateCreated: new Date()
         });
+
         await joke.save();
         res.json({ success: true, joke });
     } catch (error) {
@@ -840,39 +888,21 @@ app.post('/api/jokes', async (req, res) => {
     }
 });
 
-// Get a specific joke
+// Get specific joke endpoint (should come after /list)
 app.get('/api/jokes/:title', async (req, res) => {
     try {
         const { title } = req.params;
         const { sessionId } = req.query;
+        console.log('Get joke request:', { title, sessionId });
+
         const joke = await Joke.findOne({
             title: new RegExp(title, 'i'),
             userId: sessionId
         });
+
         res.json({ success: true, joke });
     } catch (error) {
         console.error('Error retrieving joke:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// List jokes endpoint
-app.get('/api/jokes/list', async (req, res) => {
-    try {
-        const { view, userId } = req.query;
-        console.log('List jokes request:', { view, userId });
-
-        let query = view === 'all' ? {} : { userId };
-        const jokes = await Joke.find(query).sort({ dateCreated: -1 });
-
-        console.log('Found jokes:', {
-            count: jokes.length,
-            userSpecific: view !== 'all'
-        });
-
-        res.json({ success: true, jokes });
-    } catch (error) {
-        console.error('Error listing jokes:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -881,6 +911,8 @@ app.get('/api/jokes/list', async (req, res) => {
 app.delete('/api/jokes/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        console.log('Delete joke request:', { id });
+
         await Joke.findByIdAndDelete(id);
         res.json({ success: true });
     } catch (error) {
