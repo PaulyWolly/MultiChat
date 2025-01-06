@@ -329,66 +329,105 @@ app.get('/api/personal-info/:type', async (req, res) => {
 // THEN the post route
 app.post('/api/personal-info', async (req, res) => {
     try {
-        const { type, value } = req.body;
+        const { userId, content } = req.body;
+        console.log('Store personal info request:', { userId, content });
 
-        // Log the request details to help track unwanted updates
-        console.log('Personal info storage request:', {
-            type,
-            value,
-            headers: req.headers,
-            timestamp: new Date().toISOString(),
-            referrer: req.headers.referer,
-            source: req.headers['x-request-source'] || 'unknown'
-        });
+        // Parse the content to get key and value
+        const match = content.match(/(.+?) is (.+)/);
+        if (!match) {
+            throw new Error('Invalid content format');
+        }
+        const [_, key, value] = match;
 
-        // For name updates, check if it's an unwanted overwrite
-        if (type === 'name') {
-            // Get the current stored name
-            const currentInfo = await PersonalInfo.findOne(
-                { userId: PERSISTENT_SESSION.id, type: 'name' }
-            ).sort({ timestamp: -1 });
+        // Check if this is a list type (like hobbies)
+        const listTypes = ['hobbies', 'hobby', 'interests', 'favorite foods', 'pets'];
+        const isList = listTypes.some(type => key.toLowerCase().includes(type));
 
-            // If there's an existing name and this is an unwanted overwrite
-            if (currentInfo?.value &&
-                value.toLowerCase().includes('relieved') &&
-                req.headers['x-request-source'] === 'ai-response') {
-                console.warn('Prevented unwanted name overwrite:', {
-                    current: currentInfo.value,
-                    attempted: value
-                });
-                return res.status(400).json({
-                    error: 'Invalid update attempt',
-                    details: 'Prevented unwanted name overwrite from AI response'
-                });
+        // Get existing info
+        let existingInfo = await mongoose.connection.collection('personal_info')
+            .findOne({ userId });
+
+        if (existingInfo && isList) {
+            // For list types, append the new value
+            const existingValue = existingInfo.content[key] || [];
+            if (!Array.isArray(existingValue)) {
+                // Convert to array if it wasn't already
+                existingInfo.content[key] = [existingValue];
+            }
+            if (!existingInfo.content[key].includes(value)) {
+                existingInfo.content[key].push(value);
+            }
+
+            await mongoose.connection.collection('personal_info')
+                .updateOne(
+                    { userId },
+                    { $set: { content: existingInfo.content } }
+                );
+        } else {
+            // For non-list types or new entries
+            const info = {
+                userId,
+                content: { [key]: isList ? [value] : value }
+            };
+
+            if (existingInfo) {
+                // Update existing document
+                await mongoose.connection.collection('personal_info')
+                    .updateOne(
+                        { userId },
+                        { $set: { [`content.${key}`]: info.content[key] } }
+                    );
+            } else {
+                // Create new document
+                await mongoose.connection.collection('personal_info')
+                    .insertOne(info);
             }
         }
 
-        const sessionId = `${PERSISTENT_SESSION.type}-${PERSISTENT_SESSION.id}-${PERSISTENT_SESSION.version}`;
-
-        // Store the info
-        const info = new PersonalInfo({
-            userId: PERSISTENT_SESSION.id,
-            sessionId,
-            sessionType: PERSISTENT_SESSION.type,
-            sessionVersion: PERSISTENT_SESSION.version,
-            type,
-            value,
-            timestamp: new Date(),
-            created: new Date(),
-            updated: new Date()
-        });
-
-        await info.save();
-        console.log('Successfully stored in MongoDB:', {
-            id: info._id,
-            type,
-            value,
-            collection: info.collection.name
-        });
-        res.json({ success: true, value });
+        res.json({ success: true });
     } catch (error) {
         console.error('Error storing personal info:', error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/personal-info', async (req, res) => {
+    try {
+        const { userId, key } = req.query;
+        console.log('Get personal info request:', { userId, key });
+
+        const info = await mongoose.connection.collection('personal_info')
+            .findOne({ userId });
+
+        if (info && info.content) {
+            if (key) {
+                // Return specific info
+                const value = info.content[key];
+                if (Array.isArray(value)) {
+                    // Format list items
+                    const formattedList = value.join(', ');
+                    info.content = `Your ${key} are: ${formattedList}`;
+                } else {
+                    info.content = `Your ${key} is: ${value}`;
+                }
+            } else {
+                // Format all info for display
+                const formatted = Object.entries(info.content)
+                    .map(([k, v]) => {
+                        if (Array.isArray(v)) {
+                            return `Your ${k} are: ${v.join(', ')}`;
+                        }
+                        return `Your ${k} is: ${v}`;
+                    })
+                    .join('\n');
+                info.content = formatted;
+            }
+        }
+
+        res.json({ success: true, info });
+    } catch (error) {
+        console.error('Error getting personal info:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -821,6 +860,52 @@ app.post('/api/datetime', async (req, res) => {
 // =====================================================
 // JOKE API ENDPOINTS
 // =====================================================
+
+// GET /api/jokes - List jokes
+app.get('/api/jokes', async (req, res) => {
+    try {
+        const { type } = req.query;
+        const collection = mongoose.connection.collection('my_jokes');
+
+        console.log('Jokes API Request:', {
+            type,
+            sessionId: req.query.sessionId
+        });
+
+        // First try to find jokes with current sessionId
+        let query = { userId: req.query.sessionId };
+        let jokes = await collection.find(query).toArray();
+
+        // If no jokes found with current sessionId, migrate from old session
+        if (jokes.length === 0) {
+            const oldJokes = await collection.find({ userId: /^session-/ }).toArray();
+            if (oldJokes.length > 0) {
+                const oldUserId = oldJokes[0].userId;
+                console.log('Migrating jokes from', oldUserId, 'to', req.query.sessionId);
+
+                // Migrate jokes to new sessionId
+                await collection.updateMany(
+                    { userId: oldUserId },
+                    { $set: { userId: req.query.sessionId } }
+                );
+
+                // Get jokes with new sessionId
+                jokes = await collection.find(query).toArray();
+            }
+        }
+
+        res.json({
+            success: true,
+            jokes: jokes
+        });
+    } catch (error) {
+        console.error('Error fetching jokes:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch jokes'
+        });
+    }
+});
 
 // List jokes endpoint (should come before /:title)
 app.get('/api/jokes/list', async (req, res) => {
@@ -1689,6 +1774,79 @@ app.post('/api/youtube/search', async (req, res) => {
     } catch (error) {
         console.error('YouTube API error:', error);
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+// =====================================================
+// JOKES ENDPOINTS
+// =====================================================
+
+// GET /api/jokes - List jokes
+app.get('/api/jokes', async (req, res) => {
+    try {
+        const { type } = req.query;
+        const collection = mongoose.connection.collection('my_jokes');
+
+        console.log('Jokes API Request:', {
+            type,
+            sessionId: req.query.sessionId
+        });
+
+        // First try to find jokes with current sessionId
+        let query = { userId: req.query.sessionId };
+        let jokes = await collection.find(query).toArray();
+
+        // If no jokes found with current sessionId, migrate from old session
+        if (jokes.length === 0) {
+            const oldJokes = await collection.find({ userId: /^session-/ }).toArray();
+            if (oldJokes.length > 0) {
+                const oldUserId = oldJokes[0].userId;
+                console.log('Migrating jokes from', oldUserId, 'to', req.query.sessionId);
+
+                // Migrate jokes to new sessionId
+                await collection.updateMany(
+                    { userId: oldUserId },
+                    { $set: { userId: req.query.sessionId } }
+                );
+
+                // Get jokes with new sessionId
+                jokes = await collection.find(query).toArray();
+            }
+        }
+
+        res.json({
+            success: true,
+            jokes: jokes
+        });
+    } catch (error) {
+        console.error('Error fetching jokes:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch jokes'
+        });
+    }
+});
+
+// Add this temporary debug endpoint
+app.get('/api/debug/jokes', async (req, res) => {
+    try {
+        const collection = mongoose.connection.collection('my_jokes');
+        const allJokes = await collection.find({}).toArray();
+
+        console.log('All jokes in database:', {
+            count: allJokes.length,
+            jokes: allJokes
+        });
+
+        res.json({
+            success: true,
+            count: allJokes.length,
+            jokes: allJokes
+        });
+    } catch (error) {
+        console.error('Error fetching all jokes:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 

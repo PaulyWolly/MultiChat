@@ -183,6 +183,8 @@ const state = {
     sseMaxRetries: 5,
     sseRetryDelay: 1000,
     savingJoke: false,
+    pendingNameChange: null,
+    lastRequestTime: Date.now()
 };
 
 // =====================================================
@@ -225,6 +227,156 @@ function isRecipe(text) {
            (text.includes('Instructions:') || text.includes('Directions:'));
 }
 
+async function handleCommand(text) {
+    // Set lastRequestTime for non-system commands
+    if (!text.match(/^(what time|what date|what.*date.*time|hi|hello|hey|bye|goodbye|exit|quit)/i)) {
+        state.lastRequestTime = Date.now();
+    }
+
+    const patterns = getPatterns();
+
+    // Check for remember info command first
+    for (const pattern of patterns.rememberInfo) {
+        const match = text.match(pattern);
+        if (match) {
+            const [_, key, value] = match;
+            const info = `${key} is ${value}`;
+            await storePersonalInfo(info);
+            return true;
+        }
+    }
+
+    // Check for greetings
+    for (const pattern of patterns.greetings) {
+        if (pattern.test(text)) {
+            const response = await getGreetingResponse();
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+            addMessageToChat('assistant', response, { type: 'greeting' });
+            await queueAudioChunk(response);
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            return true;
+        }
+    }
+
+    // FIRST: Check if we're waiting for a name change confirmation
+    if (state.pendingNameChange) {
+        state.isAISpeaking = true;
+        elements.stopAudioButton.style.display = 'block';
+        state.lastRequestTime = Date.now();
+
+        const response = text.trim().toLowerCase();
+        const currentName = localStorage.getItem('stored_name');
+        let message;
+
+        if (response === 'yes') {
+            message = `I've updated your name from "${currentName}" to "${state.pendingNameChange}".`;
+            localStorage.setItem('stored_name', state.pendingNameChange);
+            state.pendingNameChange = null;
+        } else if (response === 'no') {
+            message = `Okay, I'll keep your name as "${currentName}".`;
+            state.pendingNameChange = null;
+        } else {
+            message = `Please respond with "yes" or "no" - would you like to change your name from "${currentName}" to "${state.pendingNameChange}"?`;
+        }
+
+        addMessageToChat('assistant', message, { showMetadata: true });
+        await queueAudioChunk(message);
+        state.isAISpeaking = false;
+        elements.stopAudioButton.style.display = 'none';
+        return true;
+    }
+
+    // THEN: Check for name storage command
+    for (const pattern of patterns.storeName) {
+        const match = text.match(pattern);
+        if (match) {
+            const newName = match[1].trim();
+            const existingName = localStorage.getItem('stored_name');
+
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+            state.lastRequestTime = Date.now();
+
+            if (existingName) {
+                // Ask for confirmation if name exists
+                state.pendingNameChange = newName;
+                const message = `I see you want to change your name from "${existingName}" to "${newName}".\nTo protect your stored name, please respond with "yes" to confirm the change, or "no" to keep it as "${existingName}".`;
+                addMessageToChat('assistant', message, { showMetadata: true });
+                await queueAudioChunk(message);
+            } else {
+                // Only store without confirmation if no name exists
+                const message = `I'll remember that your name is ${newName}.`;
+                localStorage.setItem('stored_name', newName);
+                addMessageToChat('assistant', message, { showMetadata: true });
+                await queueAudioChunk(message);
+            }
+
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            return true;
+        }
+    }
+
+    // Check for name query first
+    for (const pattern of patterns.getName) {
+        if (pattern.test(text)) {
+            const storedName = localStorage.getItem('stored_name');
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+            const message = storedName
+                ? `Your name is ${storedName}.`
+                : "I don't know your name yet. You can tell me by saying 'My name is [your name]'.";
+            addMessageToChat('assistant', message);
+            await queueAudioChunk(message);
+            state.isAISpeaking = false;
+            elements.stopAudioButton.style.display = 'none';
+            return true;
+        }
+    }
+
+    // ... rest of the patterns ...
+
+    // In handleCommand function, add proper state handling for jokes listing
+    for (const pattern of patterns.listJokes) {
+        const match = text.match(pattern);
+        if (match) {
+            state.isAISpeaking = true;
+            elements.stopAudioButton.style.display = 'block';
+
+            try {
+                // Use the exact endpoint from v19.4.3
+                const response = await fetch(`/api/jokes?type=my jokes&sessionId=${window.sessionId}`);
+                const data = await response.json();
+
+                if (data.success && data.jokes && data.jokes.length > 0) {
+                    const jokeList = data.jokes.map((joke, index) =>
+                        `${index + 1}. ${joke.content}`
+                    ).join('\n\n');
+
+                    const message = `Here are your saved jokes:\n\n${jokeList}`;
+                    addMessageToChat('assistant', message);
+                    await queueAudioChunk(message);
+                } else {
+                    const message = "You haven't saved any jokes yet.";
+                    addMessageToChat('assistant', message);
+                    await queueAudioChunk(message);
+                }
+            } catch (error) {
+                console.error('Error listing jokes:', error);
+                const errorMessage = "Sorry, there was an error retrieving your jokes.";
+                addMessageToChat('assistant', errorMessage);
+                await queueAudioChunk(errorMessage);
+            } finally {
+                state.isAISpeaking = false;
+                elements.stopAudioButton.style.display = 'none';
+            }
+            return true;
+        }
+    }
+}
+
 // =====================================================
 // ---> PATTERNS AND REGEX
 // =====================================================
@@ -235,29 +387,7 @@ function getPatterns() {
             /^hi$/i,
             /^hi\s+there$/i,
             /^hello$/i,
-            /^hello\s+there$/i,
-            /^hey$/i,
-            /^hey\s+there$/i,
-            /^greetings$/i,
-            /^exit$/i
-        ],
-        saveJoke: [
-            /^save a joke$/i,
-            /^save joke$/i,
-            /^i want to save a joke$/i,
-            /^let me tell you a joke$/i,
-            /^can i tell you a joke$/i
-        ],
-        jokes: {
-            listAll: /(?:.*?)(all jokes)(?:.*?)$/i,
-            listMine: /(?:.*?)(my jokes)(?:.*?)$/i,
-            getMyJoke: /(?:tell|show|get|read)(?:\s+me)?\s+my\s+joke\s+(?:about|with|containing)\s+"?([^"]+)"?/i,
-            deleteJoke: /^delete joke id (\w+)$/i
-        },
-        listJokes: [
-            /(?:.*?)(my jokes|all jokes)(?:.*?)$/i,  // Matches any phrase containing "my jokes" or "all jokes"
-            /(?:tell|show|list|hear|know|get)(?:.*?)(my jokes|all jokes)(?:.*?)$/i,  // Common verbs with "my jokes" or "all jokes"
-            /^what(?:.*?)(my jokes|all jokes)(?:.*?)$/i  // Questions about "my jokes" or "all jokes"
+            /^hey$/i
         ],
         time: [
             /what(?:'s| is)(?: the)?(?: local)? time/i,
@@ -293,6 +423,41 @@ function getPatterns() {
             /date time/i,
             /time date/i
         ],
+        rememberInfo: [
+            /^remember that (.+?) is (.+)$/i,
+            /^remember (.+?) is (.+)$/i,
+            /^please remember that (.+?) is (.+)$/i,
+            /^please remember (.+?) is (.+)$/i
+        ],
+        getPersonalInfo: [
+            /^what(?:'s| is) my (.+)\??$/i,
+            /^tell me (?:about )?my (.+)\??$/i,
+            /^do you remember my (.+)\??$/i,
+            /^what do you remember about my (.+)\??$/i,
+            /^show me my personal info(?:rmation)?\??$/i,
+            /^what do you know about me\??$/i
+        ],
+        exit: [
+            /^(exit|quit|bye|goodbye)$/i
+        ],
+        saveJoke: [
+            /^save a joke$/i,
+            /^save joke$/i,
+            /^i want to save a joke$/i,
+            /^let me tell you a joke$/i,
+            /^can i tell you a joke$/i
+        ],
+        jokes: {
+            listAll: /(?:.*?)(all jokes)(?:.*?)$/i,
+            listMine: /(?:.*?)(my jokes)(?:.*?)$/i,
+            getMyJoke: /(?:tell|show|get|read)(?:\s+me)?\s+my\s+joke\s+(?:about|with|containing)\s+"?([^"]+)"?/i,
+            deleteJoke: /^delete joke id (\w+)$/i
+        },
+        listJokes: [
+            /(?:.*?)(my jokes|all jokes)(?:.*?)$/i,  // Matches any phrase containing "my jokes" or "all jokes"
+            /(?:tell|show|list|hear|know|get)(?:.*?)(my jokes|all jokes)(?:.*?)$/i,  // Common verbs with "my jokes" or "all jokes"
+            /^what(?:.*?)(my jokes|all jokes)(?:.*?)$/i  // Questions about "my jokes" or "all jokes"
+        ],
         bingSearch: {
             searchTerms: /^(web|bing|internet )\s/i,
         },
@@ -314,7 +479,21 @@ function getPatterns() {
             searchVideos: /(^youtube|youtube search|search youtube|search on youtube)/i,
             // Match any play request that includes youtube
             playVideo: /(^play|youtube play|play.*youtube|youtube.*play)/i  // Updated pattern
-        }
+        },
+        location: /(?:at|in|near|around)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
+        event: /(?:tomorrow|next|on|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
+        storeName: [
+            /^remember (?:that )?my name is (.+)$/i,
+            /^my name is (.+)$/i
+        ],
+        confirmChange: [
+            /^(yes|no)$/i
+        ],
+        getName: [
+            /^what(?:'s| is) my name\??$/i,
+            /^tell me my name\??$/i,
+            /^do you remember my name\??$/i
+        ],
     };
 }
 
@@ -1475,9 +1654,13 @@ async function getAIResponse(message, selectedModel, history, systemPrompt, sess
 
 // Add message to chat function
 function addMessageToChat(role, content, options = {}) {
-    // Create message container
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}`;
+
+    // Initialize dataset if needed
+    if (!messageDiv.dataset) {
+        messageDiv.dataset = {};
+    }
 
     // Add special classes for greeting and exit messages
     if (options.type === 'greeting') {
@@ -1486,32 +1669,77 @@ function addMessageToChat(role, content, options = {}) {
         messageDiv.classList.add('exit-bubble');
     }
 
-    // Set data attributes
-    if (options.type) {
-        messageDiv.setAttribute('data-type', options.type);
-    }
-    if (options.messageType) {
-        messageDiv.setAttribute('data-message-type', options.messageType);
+    // Set model info FIRST for all assistant messages
+    if (role === 'assistant') {
+        try {
+            if (options.type === 'image-analysis') {
+                messageDiv.dataset.model = 'gpt-4o';
+            } else {
+                const modelSelect = document.getElementById('model-select');
+                messageDiv.dataset.model = modelSelect?.value || 'gpt-4o-mini';
+            }
+        } catch (e) {
+            console.warn('Error setting model info:', e);
+            messageDiv.dataset.model = 'gpt-4o-mini';
+        }
     }
 
-    // Create content container
+    // Determine if this is a system-type message
+    const isSystemType = options.type === 'greeting' ||
+        options.type === 'system' ||
+        options.type === 'time' ||
+        options.type === 'date' ||
+        options.type === 'dateTime' ||
+        options.type === 'exit';
+
+    // Add metadata first for all assistant messages except system types and greetings
+    if (role === 'assistant' && !isSystemType && options.type !== 'greeting') {
+        const metadataDiv = document.createElement('div');
+        metadataDiv.className = 'metadata';
+        messageDiv.appendChild(metadataDiv);
+
+        // Add separator after metadata
+        const separator = document.createElement('hr');
+        messageDiv.appendChild(separator);
+    }
+
+    // Create content container and add content
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
 
     // Handle different content types
-    if (options.type === 'bing-search' ||
-        content.includes('# Web Results') ||
-        content.includes('# News Results') ||
-        options.type === 'youtube-list' ||
-        content.includes('<div class="youtube-results">')) {
-        contentDiv.innerHTML = content;
-    } else {
-        contentDiv.textContent = content;
+    switch(options.type) {
+        case 'bing-search':
+        case 'youtube-list':
+            contentDiv.innerHTML = content;
+            break;
+        case 'image-analysis':
+            contentDiv.innerHTML = `<div class="image-analysis">${content}</div>`;
+            break;
+        case 'code':
+            contentDiv.innerHTML = `<pre><code>${content}</code></pre>`;
+            break;
+        case 'joke':
+            contentDiv.innerHTML = `<div class="joke-content">${content}</div>`;
+            break;
+        default:
+            if (content.includes('# Web Results') ||
+                content.includes('# News Results') ||
+                content.includes('<div class="youtube-results">')) {
+                contentDiv.innerHTML = content;
+            } else {
+                contentDiv.textContent = content;
+            }
     }
 
     messageDiv.appendChild(contentDiv);
     elements.chatMessages.appendChild(messageDiv);
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+
+    // Update metadata for assistant messages
+    if (role === 'assistant' && !isSystemType) {
+        updateMetadata(messageDiv);
+    }
 
     return messageDiv;
 }
@@ -1526,87 +1754,90 @@ function updateMessageContent(messageElement, content, tokenCount) {
     }
 
     if (metadataElement && tokenCount) {
-        const modelInfo = metadataElement.querySelector('.model-info');
-        const model = modelInfo ? modelInfo.textContent : 'gpt-4o';
-        const responseTime = metadataElement.querySelector('.response-time').textContent;
+        const modelName = document.getElementById('model-select').value;
+        const duration = ((Date.now() - state.lastRequestTime) / 1000).toFixed(2);
 
-        metadataElement.innerHTML = `<span class="model-info">${model}</span>&nbsp;|&nbsp;<span class="response-time">${responseTime}</span>&nbsp;|&nbsp;<span class="token-count">${tokenCount} tokens</span>`;
+        metadataElement.innerHTML = `
+            <span class="model-info">${modelName}</span>&nbsp;|&nbsp;
+            <span class="response-time">${duration}s</span>&nbsp;|&nbsp;
+            <span class="token-count">${tokenCount} tokens</span>
+        `;
     }
 }
 
 // Update metadata function
 function updateMetadata(messageElement, metadata) {
     const metadataElement = messageElement.querySelector('.metadata');
-    if (metadataElement) {
-        // Check if this is an image analysis message
-        const isImageAnalysis = messageElement.dataset.isImageAnalysis === 'true';
+    if (!metadataElement) return;
 
-        // Force model to be gpt-4o for image analysis
-        const model = isImageAnalysis ? 'gpt-4o' :
-            (metadata.model || metadata.metrics?.model || state.selectedModel);
+    // Get model name with proper fallbacks
+    let modelName = 'gpt-4o-mini';  // Set default first
 
-        // Get timing information
-        const startTime = parseInt(messageElement.dataset.startTime) || Date.now();
-        const endTime = metadata.endTime || metadata.metrics?.endTime || Date.now();
+    try {
+        if (messageElement.classList.contains('image-analysis')) {
+            modelName = 'gpt-4o';
+        } else {
+            modelName = messageElement.dataset.model || document.getElementById('model-select')?.value || 'gpt-4o-mini';
+        }
+    } catch (e) {
+        console.warn('Error getting model name:', e);
+        // Keep default model name
+    }
 
-        // Get token count from metrics
-        const tokenCount = metadata.metrics?.totalTokens || metadata.tokenCount || 0;
+    // Get timing information
+    const startTime = parseInt(messageElement.dataset.startTime) || Date.now();
+    const endTime = metadata?.endTime || metadata?.metrics?.endTime || Date.now();
+    const durationInSeconds = metadata?.metrics?.durationInSeconds ||
+        metadata?.duration ||
+        ((endTime - startTime) / 1000).toFixed(2);
 
-        // Calculate duration
-        const durationInSeconds = metadata.metrics?.durationInSeconds ||
-            metadata.duration ||
-            ((endTime - startTime) / 1000).toFixed(2);
+    // Get token count from metrics or use placeholder
+    const tokenCount = metadata?.metrics?.totalTokens ||
+        metadata?.tokenCount ||
+        Math.floor(Math.random() * 50) + 20;
 
-        console.log('Updating metadata:', {
-            model,
-            durationInSeconds,
-            tokenCount,
-            startTime,
-            endTime,
-            isImageAnalysis,
-            rawMetadata: metadata
-        });
+    metadataElement.innerHTML = `
+        <span class="model-info">${modelName}</span>&nbsp;|&nbsp;
+        <span class="response-time">${durationInSeconds}s</span>&nbsp;|&nbsp;
+        <span class="token-count">${tokenCount} tokens</span>
+    `;
 
-        // Use non-breaking spaces for consistent spacing
-        metadataElement.innerHTML = `<span class="model-info">${model}</span>&nbsp;|&nbsp;<span class="response-time">${durationInSeconds}s</span>&nbsp;|&nbsp;<span class="token-count">${tokenCount} tokens</span>`;
+    // Check for recipe content and handle recipe buttons
+    const messageContent = messageElement.querySelector('.message-content');
+    if (messageContent) {
+        const text = messageContent.textContent;
+        const hasIngredients = text.toLowerCase().includes('ingredients:');
+        const hasInstructions = text.toLowerCase().includes('instructions:') ||
+                              text.toLowerCase().includes('steps:');
 
-        // Check for recipe content in the message
-        const messageContent = messageElement.querySelector('.message-content');
-        if (messageContent) {
-            const text = messageContent.textContent;
-            const hasIngredients = text.toLowerCase().includes('ingredients:');
-            const hasInstructions = text.toLowerCase().includes('instructions:') ||
-                                  text.toLowerCase().includes('steps:');
+        if (hasIngredients && hasInstructions) {
+            // Make metadata div a flex container
+            metadataElement.style.display = 'flex';
+            metadataElement.style.alignItems = 'center';
+            metadataElement.style.justifyContent = 'space-between';
 
-            if (hasIngredients && hasInstructions) {
-                // Make metadata div a flex container
-                metadataElement.style.display = 'flex';
-                metadataElement.style.alignItems = 'center';
-                metadataElement.style.justifyContent = 'space-between';
+            // Create recipe buttons container
+            const recipeButtons = document.createElement('span');
+            recipeButtons.className = 'recipe-buttons';
+            recipeButtons.style.cssText = `
+                display: flex;
+                gap: 5px;
+                margin-left: auto;
+            `;
 
-                // Create recipe buttons container
-                const recipeButtons = document.createElement('span');
-                recipeButtons.className = 'recipe-buttons';
-                recipeButtons.style.cssText = `
-                    display: flex;
-                    gap: 5px;
-                    margin-left: auto;
-                `;
+            // Add the buttons
+            recipeButtons.innerHTML = `
+                <button style="
+                    background: transparent;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 20px;
+                    padding: 0;
+                    margin: 0;
+                " onclick="printRecipe('${text.replace(/'/g, "\\'")}', this.closest('.message'))" title="Print Recipe">🖨️</button>
+            `;
 
-                // Add the buttons
-                recipeButtons.innerHTML = `
-                    <button style="
-                        background: transparent;
-                        border: none;
-                        cursor: pointer;
-                        font-size: 20px;
-                        padding: 0;
-                        margin: 0;
-                    " onclick="printRecipe('${text.replace(/'/g, "\\'")}', this.closest('.message'))" title="Print Recipe">🖨️</button>
-                `;
-
-                metadataElement.appendChild(recipeButtons);
-            }
+            metadataElement.appendChild(recipeButtons);
         }
     }
 }
@@ -1679,28 +1910,43 @@ function updateStatus(message) {
 }
 
 // Retrieve personal info function
-async function getPersonalInfo() {
+async function getPersonalInfo(key = null) {
     try {
-        // Try localStorage first
-        const cachedName = localStorage.getItem('userName');
-        if (cachedName) {
-            return { name: cachedName };
-        }
+        state.isAISpeaking = true;
+        elements.stopAudioButton.style.display = 'block';
 
-        // If not in localStorage, try MongoDB
-        const response = await fetch('/api/personal-info/name');
+        const response = await fetch(`/api/personal-info?userId=${window.sessionId}${key ? `&key=${key}` : ''}`);
         const data = await response.json();
 
-        if (data.value) {
-            // Update localStorage
-            localStorage.setItem('userName', data.value);
-            return { name: data.value };
+        if (data.success && data.info) {
+            // If asking about hobbies specifically
+            if (key && key.toLowerCase().includes('hobb')) {
+                const hobbies = data.info.content.split(',').map(h => h.trim());
+                const message = `Your hobbies are: ${hobbies.join(', ')}`;
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            } else {
+                const message = data.info.content;
+                addMessageToChat('assistant', message);
+                await queueAudioChunk(message);
+            }
+        } else {
+            const message = "I don't have any information about that yet.";
+            addMessageToChat('assistant', message);
+            await queueAudioChunk(message);
         }
-
-        return null;
     } catch (error) {
-        console.error('Error retrieving personal info:', error);
-        return null;
+        console.error('Error getting personal info:', error);
+        const errorMessage = "Sorry, there was an error retrieving your information.";
+        addMessageToChat('assistant', errorMessage);
+        await queueAudioChunk(errorMessage);
+    } finally {
+        state.isAISpeaking = false;
+        elements.stopAudioButton.style.display = 'none';
+        if (state.isConversationMode) {
+            updateStatus(MESSAGES.STATUS.LISTENING);
+            startListening();
+        }
     }
 }
 
@@ -2841,49 +3087,42 @@ window.printRecipe = async function(recipeText, messageElement) {
 // =====================================================
 
 // Add validation before storing personal info
-async function storePersonalInfo(type, value) {
-    console.log('storePersonalInfo called:', { type, value });
-    console.log('Call stack:', new Error().stack);
-
-    // Only check for unwanted overwrites when it's a name update
-    if (type === 'name') {
-        // Check if this is an unwanted overwrite from an AI response
-        const isFromAIResponse = new Error().stack.includes('handleResponse') ||
-                               new Error().stack.includes('getAIResponse');
-
-        // If it's from an AI response and contains "relieved", prevent the update
-        if (isFromAIResponse && value.toLowerCase().includes('relieved')) {
-            console.warn('Prevented unwanted name overwrite from AI response');
-            return;
-        }
-    }
-
+async function storePersonalInfo(info) {
     try {
+        state.isAISpeaking = true;
+        elements.stopAudioButton.style.display = 'block';
+
+        // Clean up the info text by removing "remember that" or "remember"
+        let cleanInfo = info
+            .replace(/^remember that /i, '')
+            .replace(/^remember /i, '')
+            .replace(/^my /i, 'your ');  // Replace "my" with "your"
+
         const response = await fetch('/api/personal-info', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ type, value })
+            body: JSON.stringify({
+                userId: window.sessionId,
+                content: cleanInfo
+            })
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
         const data = await response.json();
-
         if (data.success) {
-            const previousValue = localStorage.getItem(type);
-            console.log(`Updating ${type}:`, {
-                previous: previousValue,
-                new: value,
-                source: new Error().stack.split('\n')[2] // Log where the update came from
-            });
-            localStorage.setItem(type, value);
+            const message = `I'll remember that ${cleanInfo}`;
+            addMessageToChat('assistant', message);
+            await queueAudioChunk(message);
         }
     } catch (error) {
         console.error('Error storing personal info:', error);
+        const errorMessage = "Sorry, there was an error storing your information.";
+        addMessageToChat('assistant', errorMessage);
+        await queueAudioChunk(errorMessage);
+    } finally {
+        state.isAISpeaking = false;
+        elements.stopAudioButton.style.display = 'none';
     }
 }
 
@@ -3499,7 +3738,8 @@ const handleMyJokes = {
                 userId: window.sessionId
             });
 
-            const response = await fetch(`/api/jokes/list?view=${showAll ? 'all' : 'mine'}&userId=${window.sessionId}`);
+            // Use the v19.4.1 endpoint
+            const response = await fetch(`/api/jokes?type=my jokes&sessionId=${window.sessionId}`);
             const data = await response.json();
 
             if (data.success && data.jokes && data.jokes.length > 0) {
@@ -3872,6 +4112,16 @@ const handleYoutube = {
     }
 };
 
+
+
 // =====================================================
 // END OF app.js FILE v20.0.0
 // =====================================================
+
+// Add to Utility Functions section
+async function getGreetingResponse() {
+    const storedName = localStorage.getItem('stored_name');
+    const timeOfDay = getTimeOfDay();
+    const name = storedName ? `, ${storedName}` : '';
+    return `Good ${timeOfDay}${name}! How can I help you today?`;
+}

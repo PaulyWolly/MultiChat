@@ -223,8 +223,8 @@ button {
 /* Style for regular responses (with border/padding/margin) */
 .message.assistant .metadata {
     border-bottom: 1px solid #e0e0e0;
-    margin-bottom: 8px;
-    padding-bottom: 8px;
+    /* margin-bottom: 8px; */
+    padding-bottom: 6px;
 }
 
 /* System bubble styling (for date/time responses) */
