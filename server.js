@@ -907,53 +907,8 @@ app.get('/api/jokes', async (req, res) => {
     }
 });
 
-// List jokes endpoint (should come before /:title)
-app.get('/api/jokes/list', async (req, res) => {
-    try {
-        const { view, userId } = req.query;
-        console.log('List jokes request:', { view, userId });
-
-        // First check if we need to migrate jokes from old session
-        const oldJokes = await mongoose.connection.collection('my_jokes')
-            .find({ userId: 'session-1736122120855-er7bz6n' })
-            .toArray();
-
-        // If we found jokes with old session ID, migrate them
-        if (oldJokes.length > 0) {
-            console.log('Found old jokes, migrating to new session:', userId);
-            await Promise.all(oldJokes.map(joke =>
-                mongoose.connection.collection('my_jokes').updateOne(
-                    { _id: joke._id },
-                    { $set: { userId: userId } }
-                )
-            ));
-        }
-
-        // Now query with the current session ID
-        let query = view === 'all' ? {} : { userId };
-        console.log('Final MongoDB query:', query);
-
-        const jokes = await mongoose.connection.collection('my_jokes')
-            .find(query)
-            .sort({ dateCreated: -1 })
-            .toArray();
-
-        console.log('Found jokes:', {
-            count: jokes.length,
-            userSpecific: view !== 'all',
-            query,
-            jokes: jokes.map(j => ({ title: j.title, userId: j.userId }))
-        });
-
-        res.json({ success: true, jokes: jokes || [] });
-    } catch (error) {
-        console.error('Error listing jokes:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
 // Save joke endpoint
-app.post('/api/jokes', async (req, res) => {
+app.post('/api/jokes/list', async (req, res) => {
     try {
         const { title, content, userId } = req.body;
         console.log('Save joke request:', { title, userId });
@@ -1037,6 +992,33 @@ app.get('/api/jokes/search', async (req, res) => {
     } catch (error) {
         console.error('Error searching jokes:', error);
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+// =====================================================
+// JOKES DEBUGENDPOINTS
+// =====================================================
+
+// Add this temporary debug endpoint
+app.get('/api/debug/jokes', async (req, res) => {
+    try {
+        const collection = mongoose.connection.collection('my_jokes');
+        const allJokes = await collection.find({}).toArray();
+
+        console.log('All jokes in database:', {
+            count: allJokes.length,
+            jokes: allJokes
+        });
+
+        res.json({
+            success: true,
+            count: allJokes.length,
+            jokes: allJokes
+        });
+    } catch (error) {
+        console.error('Error fetching all jokes:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -1774,79 +1756,6 @@ app.post('/api/youtube/search', async (req, res) => {
     } catch (error) {
         console.error('YouTube API error:', error);
         res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-
-// =====================================================
-// JOKES ENDPOINTS
-// =====================================================
-
-// GET /api/jokes - List jokes
-app.get('/api/jokes', async (req, res) => {
-    try {
-        const { type } = req.query;
-        const collection = mongoose.connection.collection('my_jokes');
-
-        console.log('Jokes API Request:', {
-            type,
-            sessionId: req.query.sessionId
-        });
-
-        // First try to find jokes with current sessionId
-        let query = { userId: req.query.sessionId };
-        let jokes = await collection.find(query).toArray();
-
-        // If no jokes found with current sessionId, migrate from old session
-        if (jokes.length === 0) {
-            const oldJokes = await collection.find({ userId: /^session-/ }).toArray();
-            if (oldJokes.length > 0) {
-                const oldUserId = oldJokes[0].userId;
-                console.log('Migrating jokes from', oldUserId, 'to', req.query.sessionId);
-
-                // Migrate jokes to new sessionId
-                await collection.updateMany(
-                    { userId: oldUserId },
-                    { $set: { userId: req.query.sessionId } }
-                );
-
-                // Get jokes with new sessionId
-                jokes = await collection.find(query).toArray();
-            }
-        }
-
-        res.json({
-            success: true,
-            jokes: jokes
-        });
-    } catch (error) {
-        console.error('Error fetching jokes:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to fetch jokes'
-        });
-    }
-});
-
-// Add this temporary debug endpoint
-app.get('/api/debug/jokes', async (req, res) => {
-    try {
-        const collection = mongoose.connection.collection('my_jokes');
-        const allJokes = await collection.find({}).toArray();
-
-        console.log('All jokes in database:', {
-            count: allJokes.length,
-            jokes: allJokes
-        });
-
-        res.json({
-            success: true,
-            count: allJokes.length,
-            jokes: allJokes
-        });
-    } catch (error) {
-        console.error('Error fetching all jokes:', error);
-        res.status(500).json({ error: error.message });
     }
 });
 
