@@ -861,8 +861,8 @@ app.post('/api/datetime', async (req, res) => {
 // JOKE API ENDPOINTS
 // =====================================================
 
-// GET /api/jokes - List jokes
-app.get('/api/jokes', async (req, res) => {
+// GET /api/jokes/list-jokes - List all jokes
+app.get('/api/jokes/list-jokes', async (req, res) => {
     try {
         const { type } = req.query;
         const collection = mongoose.connection.collection('my_jokes');
@@ -907,8 +907,8 @@ app.get('/api/jokes', async (req, res) => {
     }
 });
 
-// Save joke endpoint
-app.post('/api/jokes/list', async (req, res) => {
+// POST /api/jokes/save-joke - Save new joke
+app.post('/api/jokes/save-joke', async (req, res) => {
     try {
         const { title, content, userId } = req.body;
         console.log('Save joke request:', { title, userId });
@@ -928,8 +928,8 @@ app.post('/api/jokes/list', async (req, res) => {
     }
 });
 
-// Get specific joke endpoint (should come after /list)
-app.get('/api/jokes/:title', async (req, res) => {
+// GET /api/jokes/get-joke/:title - Get specific joke by title
+app.get('/api/jokes/get-joke/:title', async (req, res) => {
     try {
         const { title } = req.params;
         const { sessionId } = req.query;
@@ -947,8 +947,8 @@ app.get('/api/jokes/:title', async (req, res) => {
     }
 });
 
-// Delete a joke
-app.delete('/api/jokes/:id', async (req, res) => {
+// DELETE /api/jokes/delete-joke/:id - Delete joke by id
+app.delete('/api/jokes/delete-joke/:id', async (req, res) => {
     try {
         const { id } = req.params;
         console.log('Delete joke request:', { id });
@@ -961,8 +961,8 @@ app.delete('/api/jokes/:id', async (req, res) => {
     }
 });
 
-// Update a joke
-app.put('/api/jokes/:title', async (req, res) => {
+// PUT /api/jokes/update-joke/:id - Update joke by id
+app.put('/api/jokes/update-joke/:id', async (req, res) => {
     try {
         const { title } = req.params;
         const { content, userId } = req.body;
@@ -978,8 +978,8 @@ app.put('/api/jokes/:title', async (req, res) => {
     }
 });
 
-// Search jokes
-app.get('/api/jokes/search', async (req, res) => {
+// GET /api/jokes/search-jokes - Search jokes
+app.get('/api/jokes/search-jokes', async (req, res) => {
     try {
         const { term } = req.query;
         const jokes = await Joke.find({
@@ -995,9 +995,49 @@ app.get('/api/jokes/search', async (req, res) => {
     }
 });
 
+// POST /api/jokes/migrate - Migrate jokes to new format
+app.post('/api/jokes/migrate', async (req, res) => {
+    try {
+        const { sessionId, oldFormat } = req.body;
+        const collection = mongoose.connection.collection('my_jokes');
+
+        // Find jokes for this session
+        const jokes = await collection.find({
+            userId: sessionId,
+            format: oldFormat
+        }).toArray();
+
+        // Update each joke to new format
+        const updates = jokes.map(joke =>
+            collection.updateOne(
+                { _id: joke._id },
+                {
+                    $set: {
+                        format: 'v20.0.1',
+                        updatedAt: new Date()
+                    }
+                }
+            )
+        );
+
+        await Promise.all(updates);
+
+        res.json({
+            success: true,
+            migrated: updates.length
+        });
+    } catch (error) {
+        console.error('Error migrating jokes:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 
 // =====================================================
-// JOKES DEBUGENDPOINTS
+// JOKES DEBUG ENDPOINTS
 // =====================================================
 
 // Add this temporary debug endpoint
@@ -1781,3 +1821,43 @@ app.listen(port, '0.0.0.0', () => {
 // =====================================================
 // END OF Server.js FILE v20.0.0
 // =====================================================
+
+// POST /api/jokes/migrate - Migrate jokes to new format
+app.post('/api/jokes/migrate', async (req, res) => {
+    try {
+        const { sessionId, oldFormat } = req.body;
+        const collection = mongoose.connection.collection('my_jokes');
+
+        // Find jokes for this session
+        const jokes = await collection.find({
+            userId: sessionId,
+            format: oldFormat
+        }).toArray();
+
+        // Update each joke to new format
+        const updates = jokes.map(joke =>
+            collection.updateOne(
+                { _id: joke._id },
+                {
+                    $set: {
+                        format: 'v20.0.1',
+                        updatedAt: new Date()
+                    }
+                }
+            )
+        );
+
+        await Promise.all(updates);
+
+        res.json({
+            success: true,
+            migrated: updates.length
+        });
+    } catch (error) {
+        console.error('Error migrating jokes:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});

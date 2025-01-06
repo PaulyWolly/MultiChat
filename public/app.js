@@ -249,7 +249,7 @@ async function handleCommand(text) {
     // Check for greetings
     for (const pattern of patterns.greetings) {
         if (pattern.test(text)) {
-            const response = await getGreetingResponse();
+            const response = generateGreeting();
             state.isAISpeaking = true;
             elements.stopAudioButton.style.display = 'block';
             addMessageToChat('assistant', response, { type: 'greeting' });
@@ -346,26 +346,61 @@ async function handleCommand(text) {
             elements.stopAudioButton.style.display = 'block';
 
             try {
-                // Use the exact endpoint from v19.4.3
-                const response = await fetch(`/api/jokes?type=my jokes&sessionId=${window.sessionId}`);
+                // First check if the server is available
+                const serverCheck = await fetch(`${SERVER_URL}/api/health`).catch(() => null);
+
+                if (!serverCheck?.ok) {
+                    throw new Error('Server unavailable');
+                }
+
+                // Build URL with query parameters properly
+                const url = new URL(`${SERVER_URL}/api/jokes/list-jokes`);
+                url.searchParams.append('sessionId', window.sessionId);
+                url.searchParams.append('type', 'my_jokes');  // Changed from 'my jokes' to 'my_jokes'
+
+                // Make the jokes request
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    console.error('Jokes API Error:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        url: url.toString()
+                    });
+
+                    const errorText = await response.text();
+                    console.error('Error response:', errorText);
+
+                    throw new Error(`Server error: ${response.status}`);
+                }
+
                 const data = await response.json();
 
-                if (data.success && data.jokes && data.jokes.length > 0) {
-                    const jokeList = data.jokes.map((joke, index) =>
-                        `${index + 1}. ${joke.content}`
-                    ).join('\n\n');
+                if (data.success && data.jokes?.length > 0) {
+                    const jokeList = data.jokes
+                        .map((joke, index) => `${index + 1}. ${joke.content}`)
+                        .join('\n\n');
 
                     const message = `Here are your saved jokes:\n\n${jokeList}`;
                     addMessageToChat('assistant', message);
                     await queueAudioChunk(message);
                 } else {
-                    const message = "You haven't saved any jokes yet.";
+                    const message = "You haven't saved any jokes yet. Would you like me to tell you a joke that you can save?";
                     addMessageToChat('assistant', message);
                     await queueAudioChunk(message);
                 }
             } catch (error) {
                 console.error('Error listing jokes:', error);
-                const errorMessage = "Sorry, there was an error retrieving your jokes.";
+                const errorMessage = error.message === 'Server unavailable'
+                    ? "Sorry, the jokes service is currently unavailable. Please try again later."
+                    : "Sorry, there was an error retrieving your jokes. Would you like me to tell you a new joke instead?";
+
                 addMessageToChat('assistant', errorMessage);
                 await queueAudioChunk(errorMessage);
             } finally {
@@ -375,7 +410,70 @@ async function handleCommand(text) {
             return true;
         }
     }
+
+    // Check for Bing search requests
+    if (text.toLowerCase().includes('search for') ||
+        text.toLowerCase().includes('look up')) {
+        return await handleBingSearch.handleSearchRequest(text);
+    }
 }
+
+// Generate Greeting
+async function generateGreeting() {
+    const hour = new Date().getHours();
+    const timeOfDay = getTimeOfDay();
+    const today = new Date();
+    const holiday = getHoliday(today);
+
+    // Get user's name from localStorage with correct key
+    let userName = localStorage.getItem('stored_name');
+
+    // If not in localStorage, try MongoDB
+    if (!userName) {
+        try {
+            const response = await fetch(`/api/personal-info/name?sessionId=${window.sessionId}`);
+            const data = await response.json();
+            if (data && data.value) {
+                userName = data.value;
+                localStorage.setItem('stored_name', userName);
+            }
+        } catch (error) {
+            console.error('Error getting user name:', error);
+        }
+    }
+
+    // Add comma only if we have a name
+    userName = userName ? `, ${userName}` : '';
+
+    if (holiday) {
+        return `${holiday.greeting}${userName}`;
+    }
+
+    const greetings = {
+        morning: [
+            `Good morning${userName}! How can I help you today?`,
+            `Rise and shine${userName}! How may I assist you?`,
+            `Good morning${userName}! What can I do for you?`,
+            `Morning${userName}! Hope you slept well!`
+        ],
+        afternoon: [
+            `Good afternoon${userName}! How can I help you today?`,
+            `Having a good day${userName}?`,
+            `Hope your day is going well${userName}!`,
+            `Afternoon${userName}! How may I assist you?`
+        ],
+        evening: [
+            `Good evening${userName}! How can I help you today?`,
+            `Evening${userName}! How was your day?`,
+            `Hope you had a great day${userName}!`,
+            `Evening${userName}! What can I do for you?`
+        ]
+    };
+
+    const options = greetings[timeOfDay];
+    return options[Math.floor(Math.random() * options.length)];
+}
+
 
 // =====================================================
 // ---> PATTERNS AND REGEX
@@ -454,9 +552,8 @@ function getPatterns() {
             deleteJoke: /^delete joke id (\w+)$/i
         },
         listJokes: [
-            /(?:.*?)(my jokes|all jokes)(?:.*?)$/i,  // Matches any phrase containing "my jokes" or "all jokes"
-            /(?:tell|show|list|hear|know|get)(?:.*?)(my jokes|all jokes)(?:.*?)$/i,  // Common verbs with "my jokes" or "all jokes"
-            /^what(?:.*?)(my jokes|all jokes)(?:.*?)$/i  // Questions about "my jokes" or "all jokes"
+            /^(show|list|tell me|get|read)?\s*(my jokes|all jokes)\s*$/i,
+            /^what(?:.*?)(my jokes|all jokes)(?:.*?)$/i
         ],
         bingSearch: {
             searchTerms: /^(web|bing|internet )\s/i,
@@ -495,67 +592,6 @@ function getPatterns() {
             /^do you remember my name\??$/i
         ],
     };
-}
-
-// Add this function near the other helper functions
-async function getGreeting() {
-    const hour = new Date().getHours();
-    const timeOfDay = getTimeOfDay();
-
-    // Get current date to check for holidays
-    const today = new Date();
-    const holiday = getHoliday(today);
-
-    // Get user's name from localStorage with correct key
-    let userName = localStorage.getItem('user_name');  // Changed from 'personalInfo.name'
-
-    console.log('Name check:', {
-        fromLocalStorage: userName,
-        key: 'user_name'
-    });
-
-    // If not in localStorage, try MongoDB
-    if (!userName) {
-        try {
-            const response = await fetch(`/api/personal-info/name?sessionId=${window.sessionId}`);
-            const data = await response.json();
-            if (data && data.value) {
-                userName = data.value;
-                // Cache it in localStorage with correct key
-                localStorage.setItem('user_name', userName);
-            }
-        } catch (error) {
-            console.error('Error getting user name:', error);
-        }
-    }
-
-    // Add comma only if we have a name
-    userName = userName ? `, ${userName}` : '';
-
-    if (holiday) {
-        return `${holiday.greeting}${userName}`;
-    }
-
-    const greetings = {
-        morning: [
-            `Good morning${userName}! How can I help you today?`,
-            `Good morning${userName}! What can I do for you?`,
-            `Good morning${userName}! How may I assist you?`
-        ],
-        afternoon: [
-            `Good afternoon${userName}! How can I help you today?`,
-            `Good afternoon${userName}! What can I do for you?`,
-            `Good afternoon${userName}! How may I assist you?`
-        ],
-        evening: [
-            `Good evening${userName}! How can I help you today?`,
-            `Good evening${userName}! What can I do for you?`,
-            `Good evening${userName}! How may I assist you?`
-        ]
-    };
-
-    const options = greetings[timeOfDay];
-    return options[Math.floor(Math.random() * options.length)];
 }
 
 // Add these helper functions near getGreeting
@@ -927,7 +963,7 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 async function sendMessage(message, isGreeting = false) {
     try {
         if (isGreeting) {
-            const greeting = await getGreeting();
+            const greeting = await generateGreeting();
             // Add user's greeting to chat first
             addMessageToChat('user', 'hello');
             // Add AI's greeting with greeting-bubble class
@@ -3268,9 +3304,9 @@ When asked for a joke:
 // Joke handling module
 const handleMyJokes = {
     state: {
-        isRecording: false,
-        currentTitle: '',
-        currentContent: '',
+        currentTitle: null,
+        currentContent: null,
+        savingJoke: false
     },
 
     // Initialize joke handling
@@ -3597,60 +3633,13 @@ const handleMyJokes = {
             return true;
         }
 
-        // // For regular joke requests
-        // if (messageText.toLowerCase().includes('tell me a joke')) {
-        //     addMessageToChat('user', messageText);
-        //     state.isProcessing = true;
-        //     state.isAISpeaking = false;
-        //     updateStatus(MESSAGES.STATUS.PROCESSING);
-
-        //     try {
-        //         const response = await fetch('/api/chat', {
-        //             method: 'POST',
-        //             headers: { 'Content-Type': 'application/json' },
-        //             body: JSON.stringify({
-        //                 message: messageText,
-        //                 history: [],
-        //                 model: state.selectedModel,
-        //                 systemPrompt: JOKE_PROMPT,   // Use the shorter joke-specific prompt
-        //                 session: window.sessionId,
-        //                 timezone: state.userTimezone
-        //             })
-        //         });
-
-        //         if (!response.ok) throw new Error('Network response was not ok');
-
-        //         // Reset states after response
-        //         state.isProcessing = false;
-        //         if (state.isConversationMode) {
-        //             updateStatus(MESSAGES.STATUS.LISTENING);
-        //             startListening();
-        //         } else {
-        //             updateStatus(MESSAGES.STATUS.DEFAULT);
-        //         }
-        //         return true;
-        //     } catch (error) {
-        //         console.error('Error in joke request:', error);
-        //         // Reset states on error
-        //         state.isProcessing = false;
-        //         state.isAISpeaking = false;
-        //         if (state.isConversationMode) {
-        //             updateStatus(MESSAGES.STATUS.LISTENING);
-        //             startListening();
-        //         } else {
-        //             updateStatus(MESSAGES.STATUS.DEFAULT);
-        //         }
-        //         return false;
-        //     }
-        // }
-
         return false; // Message wasn't joke-related
     },
 
     // Save joke to database
     async saveJoke() {
         try {
-            const response = await fetch('/api/jokes', {
+            const response = await fetch('/api/jokes/save-joke', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -3692,17 +3681,19 @@ const handleMyJokes = {
         try {
             state.isAISpeaking = true;
             elements.stopAudioButton.style.display = 'block';
-
-            const response = await fetch(`/api/jokes/${encodeURIComponent(title)}?sessionId=${window.sessionId}`);
+            // Normalize the title to match how it's stored
+            const normalizedTitle = title.toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+            const response = await fetch(`/api/jokes/get-joke/${encodeURIComponent(normalizedTitle)}?sessionId=${window.sessionId}`);
             const data = await response.json();
 
             if (data.success && data.joke) {
                 const message = "I found your joke. Would you like to hear it?";
                 addMessageToChat('assistant', message);
                 await queueAudioChunk(message);
+                // Store the joke content for when user says yes
                 sessionStorage.setItem('pendingJoke', JSON.stringify(data.joke));
             } else {
-                const message = `I couldn't find a joke containing "${title}".`;
+                const message = `Sorry, I couldn't find a joke about "${title}".`;
                 addMessageToChat('assistant', message);
                 await queueAudioChunk(message);
             }
@@ -3714,10 +3705,6 @@ const handleMyJokes = {
         } finally {
             state.isAISpeaking = false;
             elements.stopAudioButton.style.display = 'none';
-            if (state.isConversationMode) {
-                updateStatus(MESSAGES.STATUS.LISTENING);
-                startListening();
-            }
         }
     },
 
@@ -3739,7 +3726,7 @@ const handleMyJokes = {
             });
 
             // Use the v19.4.1 endpoint
-            const response = await fetch(`/api/jokes?type=my jokes&sessionId=${window.sessionId}`);
+            const response = await fetch(`/api/jokes/list-jokes?type=my jokes&sessionId=${window.sessionId}`);
             const data = await response.json();
 
             if (data.success && data.jokes && data.jokes.length > 0) {
@@ -3801,7 +3788,7 @@ const handleMyJokes = {
             state.isAISpeaking = true;
             elements.stopAudioButton.style.display = 'block';
             // First get the joke to get its ID
-            const getResponse = await fetch(`/api/jokes/${encodeURIComponent(title)}`);
+            const getResponse = await fetch(`/api/jokes/delete-joke/${encodeURIComponent(title)}`);
             const getData = await getResponse.json();
 
             if (!getData.success) {
@@ -3810,7 +3797,7 @@ const handleMyJokes = {
 
             // Then delete using the ID
             const response = await fetch(
-                `/api/jokes/${getData.joke.id}`,
+                `/api/jokes/delete-joke/${getData.joke.id}`,
                 {
                     method: 'DELETE'
                 }
@@ -3855,7 +3842,7 @@ const handleMyJokes = {
         try {
             state.isAISpeaking = true;
             elements.stopAudioButton.style.display = 'block';
-            const response = await fetch(`/api/jokes/${encodeURIComponent(title)}`, {
+            const response = await fetch(`/api/jokes/update-joke/${encodeURIComponent(title)}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json'
@@ -3896,7 +3883,7 @@ const handleMyJokes = {
         try {
             state.isAISpeaking = true;
             elements.stopAudioButton.style.display = 'block';
-            const response = await fetch(`/api/jokes/search?term=${encodeURIComponent(searchTerm)}`);
+            const response = await fetch(`/api/jokes/search-jokes?term=${encodeURIComponent(searchTerm)}`);
             const data = await response.json();
 
             if (data.success && data.jokes.length > 0) {
@@ -3922,43 +3909,45 @@ const handleMyJokes = {
                 startListening();
             }
         }
-    }
-};
+    },
 
-// Display jokes function
-function displayJokes(jokes) {
-    const jokeList = document.createElement('div');
-    jokeList.className = 'joke-list';
+    // Migrate jokes between users
+    async migrateJokes(fromUserId, toUserId) {
+        try {
+            const response = await fetch('/api/jokes/migrate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ fromUserId, toUserId })
+            });
+            const data = await response.json();
+            console.log('Joke migration result:', data);
+            return data;
+        } catch (error) {
+            console.error('Error migrating jokes:', error);
+            throw error;
+        }
+    },
 
-    jokes.forEach(joke => {
-        const jokeItem = document.createElement('div');
-        jokeItem.className = 'joke-item';
-        jokeItem.innerHTML = `
-            <span class="joke-number">${joke.number}.</span>
-            <span class="joke-text">${joke.text}</span>
-        `;
-        jokeList.appendChild(jokeItem);
-    });
+    // Display jokes in a formatted list
+    displayJokes(jokes) {
+        const jokeList = document.createElement('div');
+        jokeList.className = 'joke-list';
 
-    addMessageToChat('system', jokeList.outerHTML);
-}
-
-// Add migration function
-async function migrateJokes(fromUserId, toUserId) {
-    try {
-        const response = await fetch('/api/jokes/migrate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ fromUserId, toUserId })
+        jokes.forEach(joke => {
+            const jokeItem = document.createElement('div');
+            jokeItem.className = 'joke-item';
+            jokeItem.innerHTML = `
+                <span class="joke-number">${joke.number}.</span>
+                <span class="joke-text">${joke.text}</span>
+            `;
+            jokeList.appendChild(jokeItem);
         });
-        const data = await response.json();
-        console.log('Joke migration result:', data);
-    } catch (error) {
-        console.error('Error migrating jokes:', error);
-    }
-}
+
+        addMessageToChat('system', jokeList.outerHTML);
+    },
+};
 
 
 // =====================================================
@@ -4113,15 +4102,40 @@ const handleYoutube = {
 };
 
 
+// =====================================================
+// BING SEARCH MODULE
+// =====================================================
+
+const handleBingSearch = {
+    async handleSearchRequest(messageText) {
+        console.log('Bing search request:', messageText);
+
+        try {
+            const query = messageText
+                .replace(/search for|look up/i, '')
+                .trim();
+
+            const response = await fetch('/api/bing-search', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ query })
+            });
+
+            const data = await response.json();
+            addMessageToChat('assistant', data.response);
+            return true;
+        } catch (error) {
+            console.error('Bing search error:', error);
+            addMessageToChat('assistant', 'Sorry, there was an error processing your search request.');
+            return true;
+        }
+    }
+};
+
+
 
 // =====================================================
 // END OF app.js FILE v20.0.0
 // =====================================================
-
-// Add to Utility Functions section
-async function getGreetingResponse() {
-    const storedName = localStorage.getItem('stored_name');
-    const timeOfDay = getTimeOfDay();
-    const name = storedName ? `, ${storedName}` : '';
-    return `Good ${timeOfDay}${name}! How can I help you today?`;
-}
