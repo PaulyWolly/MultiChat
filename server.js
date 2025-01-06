@@ -1,9 +1,9 @@
 /*
   SERVER.js
-  Version: 20.0.0
-  AppName: Multi-Chat [v20.0.0]
+  Version: 20.0.1
+  AppName: Multi-Chat [v20.0.1]
   Created by Paul Welby
-  updated: January 5, 2025 @7:30PM
+  updated: January 5, 2025 @830PM
 */
 
 // Required dependencies
@@ -36,7 +36,7 @@ const openai = new OpenAI({
 const app = express();
 
 // Set the port
-const port = process.env.PORT || 32000;
+const port = process.env.PORT || 32001;
 
 // Configure middleware with increased limits
 app.use(cors());

@@ -1,9 +1,9 @@
 /*
   APP.js
-  Version: 20.0.0
-  AppName: Multi-Chat [v20.0.0]
+  Version: 20.0.1
+  AppName: Multi-Chat [v20.0.1]
   Created by Paul Welby
-  updated: January 4, 2025 @7:30PM
+  updated: January 5, 2025 @830PM
 */
 
 // =====================================================
@@ -11,7 +11,7 @@
 // =====================================================
 
 // SERVER URL
-const SERVER_URL = 'http://localhost:32000';
+const SERVER_URL = 'http://localhost:32001';
 
 // Time constants
 const INTERVAL = 10;  // Set timeout duration in minutes
