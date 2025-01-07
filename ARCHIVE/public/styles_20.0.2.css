@@ -1,9 +1,9 @@
 /*
   STYLES.css
-  Version: 19.4.1-r-p-j-yt
-  AppName: Multi-Chat [v19.4.1 R-P-J-YT]
+  Version: 20.0.2
+  AppName: Multi-Chat [v20.0.2]
   Created by Paul Welby
-  updated: January 3, 2025 @9:45PM
+  Updated: January 7, 2025 @5:00AM
 */
 
 body {
@@ -18,7 +18,7 @@ body {
 
 #chat-container {
     position: relative;
-    width: 95%;
+    width: 98%;
     height: 95vh;
     border: 1px solid #ccc;
     border-radius: 5px;
@@ -75,15 +75,15 @@ body {
     height: 100%;
 }
 
-#status {
-    color: #333;
+status {
+    color: #0451f8;
     font-weight: bold;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
     line-height: 1.2;
-    font-size: 2.0vh;
+    font-size: 2.3vh;
     white-space: pre-wrap;
     text-align: left;
     margin: 5px 0;
@@ -98,6 +98,9 @@ body {
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
+    font-size: 2.3vh;
+    font-weight: 400;
+    max-width: 65%;
 }
 
 #input-container {
@@ -223,8 +226,8 @@ button {
 /* Style for regular responses (with border/padding/margin) */
 .message.assistant .metadata {
     border-bottom: 1px solid #e0e0e0;
-    margin-bottom: 8px;
-    padding-bottom: 8px;
+    /* margin-bottom: 8px; */
+    padding-bottom: 6px;
 }
 
 /* System bubble styling (for date/time responses) */
@@ -248,7 +251,8 @@ button {
 .model-info {
     font-weight: bold;
     color: #555;
-    text-transform: capitalize;
+    /* text-transform: capitalize; */
+    padding-right: 5px;
 }
 
 /* Special styling for system responses */
@@ -267,7 +271,6 @@ button {
     width: 100%;
     word-wrap: break-word;
     white-space: pre-wrap;
-    overflow-wrap: break-word;
 }
 
 .message-text {
@@ -744,7 +747,6 @@ button {
 .greeting-bubble {
     background-color: #b9f6c3 !important;  /* Green background */
     border: 1px solid #8be49b !important;
-
 }
 
 .exit-bubble {
@@ -1021,8 +1023,8 @@ button {
 .message.assistant {
     background-color: #f0f0f0;
     align-self: flex-start;
-    width: fit-content;
-    max-width: 80%;
+    width: max-content;  /* Natural width for short messages */
+    max-width: 80%;     /* Never exceed 80% */
     padding: 8px 12px;
     border-radius: 12px;
     border: 1px solid #e0e0e0;
@@ -1101,60 +1103,9 @@ button {
     width: 80%;  /* Full width for long content */
 }
 
-.boldItalicName {
-    font-weight: bold;
-    font-style: italic;
-}
+/* Add these styles at the end of your existing styles.css file */
 
-/* Update the greeting bubble message content style */
-.greeting-bubble .message-content {
-    flex-direction: row !important;  /* Force content to stay on one line */
-    white-space: nowrap;  /* Prevent wrapping */
-    width: auto;  /* Allow content to determine width */
-}
-
-/* .status {
-    position: fixed;
-    top: 10px;
-    right: 10px;
-    padding: 5px 10px;
-    background-color: #333;
-    color: #fff;
-    border-radius: 5px;
-    font-size: 14px;
-} */
-
-/* Joke list styling */
-.joke-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin: 10px 0;
-}
-
-.joke-header {
-    font-weight: bold;
-    margin-bottom: 10px;
-}
-
-.joke-item {
-    display: flex;
-    gap: 10px;
-    padding: 5px;
-    border-radius: 4px;
-    background: #f5f5f5;
-}
-
-.joke-number {
-    min-width: 25px;
-    font-weight: bold;
-}
-
-.joke-text {
-    flex: 1;
-}
-
-/* YouTube Container */
+/* YouTube Container Styles */
 .youtube-container {
     position: fixed;
     top: 50%;
@@ -1164,9 +1115,9 @@ button {
     height: 80vh;
     background: rgba(0, 0, 0, 0.9);
     z-index: 1000;
-    padding: 20px;
+    /* padding: 20px;
     border-radius: 10px;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5); */
 }
 
 .youtube-container.hidden {
@@ -1188,6 +1139,7 @@ button {
     color: white;
     font-size: 24px;
     cursor: pointer;
+
     padding: 5px 10px;
     border-radius: 5px;
 }
@@ -1196,22 +1148,12 @@ button {
     background: rgba(255, 255, 255, 0.1);
 }
 
-/* YouTube Results Message Container */
-.message.assistant[data-type="youtube"],
-.message.assistant:has(.youtube-results) {
-    width: 80% !important;
-    max-width: 80% !important;
-}
-
-.message.assistant[data-type="youtube"] .message-content,
-.message.assistant:has(.youtube-results) .message-content {
-    width: 100% !important;
-    display: block !important;
-}
+/* ================================= */
 
 /* YouTube Results List */
 .youtube-results {
     margin: 10px 0;
+
     padding: 15px;
     background: #f8f9fa;
     border-radius: 8px;
@@ -1221,6 +1163,7 @@ button {
 .video-list {
     list-style: decimal;
     padding-left: 25px;
+
     margin: 0;
 }
 
@@ -1268,4 +1211,83 @@ button {
     color: #6c757d;
     margin-top: 5px;
     padding-left: 5px;
+}
+
+/* Add these styles at the end of the file */
+
+/* Exit message styling */
+.message.assistant[data-type="exit"] {
+    background-color: #ffebee;  /* Light red background */
+    border-color: #ef9a9a;      /* Darker red border */
+}
+
+/* Joke list styling */
+.joke-list {
+    margin: 10px 0;
+    padding: 10px;
+    background-color: #f5f5f5;
+    border-radius: 5px;
+}
+
+.joke-item {
+    margin: 5px 0;
+    padding: 5px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.joke-number {
+    font-weight: bold;
+    margin-right: 10px;
+    color: #666;
+}
+
+.joke-text {
+    color: #333;
+}
+
+/* Status message specific styles */
+.status-default {
+    color: #0451f8;
+    font-size: 2.3vh;
+    max-width: 70%;
+    font-weight: 600;
+}
+
+.status-listening {
+    color: #0451f8;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-video-playing {
+    color: #d32f2f;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-processing {
+    color: #f57c00;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-error {
+    color: #c62828;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-initializing {
+    color: #39393a;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.conversation-enable-message {
+    color: #666;
+    font-style: italic;
+    font-size: 2.0vh;
+    font-weight: 400;
+    white-space: pre-wrap;
+    max-width: 100%;
 }

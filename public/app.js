@@ -1,9 +1,9 @@
 /*
   APP.js
-  Version: 20.0.1
-  AppName: Multi-Chat [v20.0.1]
+  Version: 20.0.2
+  AppName: Multi-Chat [v20.0.2]
   Created by Paul Welby
-  Updated: January 6, 2025 @7:00AM
+  Updated: January 7, 2025 @5:00AM
 */
 
 // =====================================================
@@ -11,7 +11,7 @@
 // =====================================================
 
 // SERVER URL
-const SERVER_URL = 'http://localhost:32001';
+const SERVER_URL = 'http://localhost:32002';
 
 // Time constants
 const INTERVAL = 10;  // Set timeout duration in minutes
@@ -3356,6 +3356,7 @@ const handleMyJokes = {
 
     // Handle incoming messages
     async handleJokeRequest(messageText) {
+        const startTime = performance.now();
         console.log('handleJokeRequest received:', messageText);
 
         // Get patterns first
@@ -3369,8 +3370,12 @@ const handleMyJokes = {
             if (this.state.isRecording === 'waiting_for_title') {
                 this.state.currentTitle = messageText;
                 const confirmMessage = `Your joke will be titled "${messageText}". Is this correct? Say YES or NO.`;
-                addMessageToChat('assistant', confirmMessage);
-                await queueAudioChunk(confirmMessage);  // Use queueAudioChunk instead
+                addMessageToChat('assistant', confirmMessage, {
+                    duration: `${((performance.now() - startTime) / 1000).toFixed(2)}s`,
+                    model: 'system',
+                    messageType: 'joke'
+                });
+                await queueAudioChunk(confirmMessage);
                 this.state.isRecording = 'confirming_title';
                 updateStatus("Waiting for confirmation...");
                 return true;
@@ -3383,7 +3388,9 @@ const handleMyJokes = {
             console.log('List jokes pattern matched:', listJokeMatch);
             addMessageToChat('user', messageText);
             const showAll = messageText.toLowerCase().includes('all jokes');
-            await this.listJokes(showAll);
+            const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+            const metadata = { duration: `${duration}s`, model: 'system', messageType: 'joke-list' };
+            await this.listJokes(showAll, metadata);
             return true;
         }
 
@@ -3709,9 +3716,8 @@ const handleMyJokes = {
 
     // Retrieve joke from database
     async retrieveJoke(title) {
+        const startTime = performance.now();
         try {
-            state.isAISpeaking = true;
-            elements.stopAudioButton.style.display = 'block';
             // Normalize the title to match how it's stored
             const normalizedTitle = title.toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
             const response = await fetch(`/api/jokes/get-joke/${encodeURIComponent(normalizedTitle)}?sessionId=${window.sessionId}`);
@@ -3719,23 +3725,37 @@ const handleMyJokes = {
 
             if (data.success && data.joke) {
                 const message = "I found your joke. Would you like to hear it?";
-                addMessageToChat('assistant', message);
+                const metadata = {
+                    model: elements.modelSelect.value,
+                    duration: `${((performance.now() - startTime) / 1000).toFixed(2)}s`,
+                    tokens: '32 tokens',
+                    messageType: 'joke'
+                };
+                addMessageToChat('assistant', message, metadata);
                 await queueAudioChunk(message);
-                // Store the joke content for when user says yes
                 sessionStorage.setItem('pendingJoke', JSON.stringify(data.joke));
             } else {
                 const message = `Sorry, I couldn't find a joke about "${title}".`;
-                addMessageToChat('assistant', message);
+                const metadata = {
+                    model: elements.modelSelect.value,
+                    duration: `${((performance.now() - startTime) / 1000).toFixed(2)}s`,
+                    tokens: '37 tokens',
+                    messageType: 'joke'
+                };
+                addMessageToChat('assistant', message, metadata);
                 await queueAudioChunk(message);
             }
         } catch (error) {
             console.error('Error retrieving joke:', error);
             const errorMessage = "Sorry, there was an error retrieving your joke.";
-            addMessageToChat('assistant', errorMessage);
+            const metadata = {
+                model: elements.modelSelect.value,
+                duration: `${((performance.now() - startTime) / 1000).toFixed(2)}s`,
+                tokens: '30 tokens',
+                messageType: 'error'
+            };
+            addMessageToChat('assistant', errorMessage, metadata);
             await queueAudioChunk(errorMessage);
-        } finally {
-            state.isAISpeaking = false;
-            elements.stopAudioButton.style.display = 'none';
         }
     },
 
@@ -3746,23 +3766,24 @@ const handleMyJokes = {
     },
 
     // Add this new method to handleMyJokes
-    async listJokes(showAll = false) {
+    async listJokes(showAll = false, metadata = {}) {
+        const startTime = performance.now();
         try {
             state.isAISpeaking = true;
             elements.stopAudioButton.style.display = 'block';
 
-            console.log('List jokes request:', {
-                showAll,
-                userId: window.sessionId
-            });
-
-            // Use the v19.4.1 endpoint
             const response = await fetch(`/api/jokes/list-jokes?type=my jokes&sessionId=${window.sessionId}`);
             const data = await response.json();
 
             if (data.success && data.jokes && data.jokes.length > 0) {
                 const messageText = "Here is a listing of your jokes:";
-                addMessageToChat('assistant', messageText);
+                const metadata = {
+                    model: elements.modelSelect.value || 'gpt-4o-mini',
+                    duration: ((performance.now() - startTime) / 1000).toFixed(2),
+                    tokens: 41,
+                    messageType: 'joke-list'
+                };
+                addMessageToChat('assistant', messageText, metadata);
 
                 // Create message element with joke list
                 const messageElement = document.createElement('div');
@@ -3795,21 +3816,22 @@ const handleMyJokes = {
                 await queueAudioChunk("To hear your joke, ask Tell me my joke about, followed by the joke name");
             } else {
                 const message = "You haven't saved any jokes yet.";
-                addMessageToChat('assistant', message);
+                addMessageToChat('assistant', message, {
+                    duration: `${((performance.now() - startTime) / 1000).toFixed(2)}s`,
+                    model: 'system',
+                    messageType: 'joke-list'
+                });
                 await queueAudioChunk(message);
             }
         } catch (error) {
             console.error('Error listing jokes:', error);
             const errorMessage = "Sorry, there was an error retrieving your jokes.";
-            addMessageToChat('assistant', errorMessage);
+            addMessageToChat('assistant', errorMessage, {
+                duration: `${((performance.now() - startTime) / 1000).toFixed(2)}s`,
+                model: 'system',
+                messageType: 'error'
+            });
             await queueAudioChunk(errorMessage);
-        } finally {
-            state.isAISpeaking = false;
-            elements.stopAudioButton.style.display = 'none';
-            if (state.isConversationMode) {
-                updateStatus(MESSAGES.STATUS.LISTENING);
-                startListening();
-            }
         }
     },
 
