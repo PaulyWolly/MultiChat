@@ -236,6 +236,14 @@ async function handleCommand(text) {
 
     const patterns = getPatterns();
 
+    // Check for time/date queries first
+    if (patterns.time.some(pattern => pattern.test(text)) ||
+        patterns.date.some(pattern => pattern.test(text)) ||
+        patterns.dateTime.some(pattern => pattern.test(text))) {
+        handleTimeQuery(text);
+        return true;
+    }
+
     // Check for remember info command first
     for (const pattern of patterns.rememberInfo) {
         const match = text.match(pattern);
@@ -474,6 +482,34 @@ async function generateGreeting() {
     const options = greetings[timeOfDay];
     return options[Math.floor(Math.random() * options.length)];
 }
+
+// // Handle time-related queries
+// function handleTimeQuery(messageText) {
+//     const currentTime = new Date();
+//     let response;
+
+//     if (messageText.toLowerCase().includes('date and time')) {
+//         response = `Today's date is ${currentTime.toLocaleDateString()} and the local time is ${currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+//         const messageElement = document.createElement('div');
+//         messageElement.className = 'message system-bubble datetime-response';
+//         messageElement.textContent = response;
+//         elements.chatMessages.appendChild(messageElement);
+//     } else if (messageText.toLowerCase().includes('time')) {
+//         response = `The local time is ${currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+//         const messageElement = document.createElement('div');
+//         messageElement.className = 'message system-bubble time-response';
+//         messageElement.textContent = response;
+//         elements.chatMessages.appendChild(messageElement);
+//     } else if (messageText.toLowerCase().includes('date')) {
+//         response = `Today's date is ${currentTime.toLocaleDateString()}`;
+//         const messageElement = document.createElement('div');
+//         messageElement.className = 'message system-bubble date-response';
+//         messageElement.textContent = response;
+//         elements.chatMessages.appendChild(messageElement);
+//     }
+
+//     return response;
+// }
 
 
 // =====================================================
@@ -973,6 +1009,39 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // Send message function
 async function sendMessage(message, isGreeting = false) {
     try {
+        // Check for date/time requests
+        const hasDate = message.toLowerCase().match(/date/);
+        const hasTime = message.toLowerCase().match(/time/);
+        const isDateTimeRequest = hasDate || hasTime;
+
+        if (isDateTimeRequest) {
+            const today = new Date();
+            let response;
+            const messageElement = document.createElement('div');
+
+            // const messageElement = addMessageToChat('assistant', response);
+            addMessageToChat('user', message);
+
+            // Check if asking for date, time, or both
+            if (hasTime && !hasDate) {
+                response = `The local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+                messageElement.className = 'message system-bubble time-response';
+            } else if (hasDate && !hasTime) {
+                response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
+                messageElement.className = 'message system-bubble date-response';
+            } else {
+                response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} and the local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+                messageElement.className = 'message system-bubble datetime-response';
+            }
+
+            // Queue audio for date/time response
+            await queueAudioChunk(response);
+
+            messageElement.textContent = response;
+            elements.chatMessages.appendChild(messageElement);
+            return;
+        }
+
         if (isGreeting) {
             const greeting = await generateGreeting();
             // Add user's greeting to chat first
@@ -1491,32 +1560,32 @@ async function sendMessage(message, isGreeting = false) {
             // For all other messages, add user message before processing
             addMessageToChat('user', messageText);
 
-            // Update the time/date check to be more specific
-            const hasDate = messageText.toLowerCase().includes('date') || messageText.toLowerCase().includes('today');
-            const hasTime = messageText.toLowerCase().includes('time');
-            const isDateTimeRequest = hasDate || hasTime;
+            // // Update the time/date check to be more specific
+            // const hasDate = messageText.toLowerCase().includes('date') || messageText.toLowerCase().includes('today');
+            // const hasTime = messageText.toLowerCase().includes('time');
+            // const isDateTimeRequest = hasDate || hasTime;
 
-            if (isDateTimeRequest) {
-                const today = new Date();
-                let response;
+            // if (isDateTimeRequest) {
+            //     const today = new Date();
+            //     let response;
 
-                // Check if asking for date, time, or both
-                if (hasTime && !hasDate) {
-                    response = `The local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
-                } else if (hasDate && !hasTime) {
-                    response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
-                } else {
-                    response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} and the local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
-                }
+            //     // Check if asking for date, time, or both
+            //     if (hasTime && !hasDate) {
+            //         response = `The local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+            //     } else if (hasDate && !hasTime) {
+            //         response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
+            //     } else {
+            //         response = `Today's date is ${today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} and the local time is ${today.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
+            //     }
 
-                // const messageElement = addMessageToChat('assistant', response);
-                addMessageToChat('assistant', response);
+            //     // const messageElement = addMessageToChat('assistant', response);
+            //     addMessageToChat('system', response);
 
-                // Queue audio for date/time response
-                await queueAudioChunk(response);
+            //     // Queue audio for date/time response
+            //     await queueAudioChunk(response);
 
-                return;
-            }
+            //     return;
+            // }
 
             // Check if the user is asking for a joke
             const isJokeRequest = messageText.toLowerCase().includes('joke');
@@ -1774,8 +1843,8 @@ function addMessageToChat(role, content, options = {}) {
                 content.includes('# News Results') ||
                 content.includes('<div class="youtube-results">')) {
                 contentDiv.innerHTML = content;
-            } else {
-                contentDiv.textContent = content;
+    } else {
+        contentDiv.textContent = content;
             }
     }
 
@@ -1813,7 +1882,15 @@ function updateMessageContent(messageElement, content, tokenCount) {
 }
 
 // Update metadata function
-function updateMetadata(messageElement, metadata) {
+function updateMetadata(messageElement, metadata = {}) {  // Add default empty object
+    // Skip metadata for system messages and date/time responses
+    if (metadata.type === 'system' ||
+        metadata.messageType === 'time' ||
+        metadata.messageType === 'date' ||
+        metadata.messageType === 'dateTime') {
+        return {};
+    }
+
     const metadataElement = messageElement.querySelector('.metadata');
     if (!metadataElement) return;
 
@@ -1836,7 +1913,7 @@ function updateMetadata(messageElement, metadata) {
     const endTime = metadata?.endTime || metadata?.metrics?.endTime || Date.now();
     const durationInSeconds = metadata?.metrics?.durationInSeconds ||
         metadata?.duration ||
-        ((endTime - startTime) / 1000).toFixed(2);
+            ((endTime - startTime) / 1000).toFixed(2);
 
     // Get token count from metrics or use placeholder
     const tokenCount = metadata?.metrics?.totalTokens ||
@@ -1855,7 +1932,7 @@ function updateMetadata(messageElement, metadata) {
         const text = messageContent.textContent;
         const hasIngredients = text.toLowerCase().includes('ingredients:');
         const hasInstructions = text.toLowerCase().includes('instructions:') ||
-                              text.toLowerCase().includes('steps:');
+                                text.toLowerCase().includes('steps:');
 
         if (hasIngredients && hasInstructions) {
             // Make metadata div a flex container
@@ -3777,13 +3854,12 @@ const handleMyJokes = {
 
             if (data.success && data.jokes && data.jokes.length > 0) {
                 const messageText = "Here is a listing of your jokes:";
-                const metadata = {
-                    model: elements.modelSelect.value || 'gpt-4o-mini',
+                addMessageToChat('assistant', messageText, {
+                    modelName: elements.modelSelect.value,
                     duration: ((performance.now() - startTime) / 1000).toFixed(2),
                     tokens: 41,
-                    messageType: 'joke-list'
-                };
-                addMessageToChat('assistant', messageText, metadata);
+                    type: 'joke-list'
+                });
 
                 // Create message element with joke list
                 const messageElement = document.createElement('div');
