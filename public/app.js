@@ -63,12 +63,13 @@ const MESSAGES = {
         PROCESSING: "Processing...",
         READY: "Ready",
         ERROR: "Error occurred. Please refresh the page if issues persist.",
-        INITIALIZING: "Initializing app..."
+        INITIALIZING: "Initializing app...",
+        VIDEO_PLAYING: 'Video playing...'
     },
     CONVERSATION: {
-        ENABLE: "Conversation Mode is now enabled. You can speak freely, and say 'exit' when you want to end the conversation.",
+        ENABLE: "Conversation Mode is now enabled. You can speak freely \n ...and say 'exit' when you want to end the conversation.",
         DISABLE: "Conversation Mode has been disabled. You can still type messages or click the microphone button for single responses.",
-        STATUS: "Conversation Mode is enabled.<br>Say \"exit\" to end conversation"
+        EXIT: 'Conversation ended'
     },
     CLOSINGS: {
         EXIT: "Okay. Bye for now. We'll chat later!",
@@ -4065,23 +4066,35 @@ const handleYoutube = {
         this.createVideoContainer();
         const videoWrapper = document.getElementById('youtube-video');
 
-        if (state.isListening) {
+        // Create iframe with event listener
+        const iframe = document.createElement('iframe');
+        iframe.width = "100%";
+        iframe.height = "100%";
+        iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+        iframe.frameBorder = "0";
+        iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
+        iframe.allowFullscreen = true;
+
+        // When iframe loads, update status and mic state
+        iframe.onload = () => {
+            // Force stop listening and update states
             stopListening();
-        }
-        this.isPlaying = true;
+            state.isListening = false;
+            // Store previous conversation mode state
+            this.previousConversationMode = state.isConversationMode;
+            state.isConversationMode = false;  // Temporarily disable conversation mode
 
-        videoWrapper.innerHTML = `
-            <iframe
-                width="100%"
-                height="100%"
-                src="https://www.youtube.com/embed/${videoId}?autoplay=1"
-                frameborder="0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowfullscreen>
-            </iframe>`;
+            // Update status and mic visual state
+            updateStatus(MESSAGES.STATUS.VIDEO_PLAYING);
+            if (elements.microphoneButton) {
+                elements.microphoneButton.classList.remove('active');
+            }
+        };
+
+        videoWrapper.innerHTML = '';
+        videoWrapper.appendChild(iframe);
         elements.videoContainer.classList.remove('hidden');
-
-        updateStatus('YouTube video is playing. Speech recognition is paused.');
+        this.isPlaying = true;
     },
 
     hideVideo() {
@@ -4091,12 +4104,28 @@ const handleYoutube = {
             elements.videoContainer.classList.add('hidden');
             this.isPlaying = false;
 
-            if (state.isConversationMode) {
-                updateStatus(MESSAGES.CONVERSATION.STATUS);
-                startListening();
+            // Restore previous conversation mode state
+            if (this.previousConversationMode) {
+                state.isConversationMode = true;
+                state.isListening = true;
+                // Ensure recognition is restarted
+                if (state.recognition) {
+                    state.recognition.start();
+                } else {
+                    initializeSpeechRecognition();
+                    state.recognition.start();
+                }
+                updateStatus(MESSAGES.STATUS.LISTENING);
+                // Update mic visual state
+                if (elements.microphoneButton) {
+                    elements.microphoneButton.classList.add('active');
+                    elements.microphoneButton.textContent = '🔴';  // Active mic indicator
+                }
             } else {
                 updateStatus(MESSAGES.STATUS.DEFAULT);
             }
+            // Clear stored state
+            this.previousConversationMode = null;
         }
     }
 };
@@ -4109,6 +4138,13 @@ const handleYoutube = {
 const handleBingSearch = {
     async handleSearchRequest(messageText) {
         console.log('Bing search request:', messageText);
+
+        // Stop listening during search playback
+        if (state.isListening) {
+            stopListening();
+            state.isListening = false;
+            updateStatus('Microphone disabled during search playback');
+        }
 
         try {
             const query = messageText
