@@ -57,7 +57,7 @@ const MIC_INITIALIZATION_DELAY = 4000;  // 4 seconds delay
 // Add the MESSAGES constant
 const MESSAGES = {
     STATUS: {
-        DEFAULT: "Click the Conversation Mode checkbox, or press the microphone button \nto enable conversations, or enter a message and press Send",
+        DEFAULT: "Click the Conversation Mode checkbox, or press the microphone button \n...to enable conversations, or enter a message and press Send",
         LISTENING: "Listening...",
         SPEAKING: "AI is speaking...",
         PROCESSING: "Processing...",
@@ -775,13 +775,23 @@ async function handleConversationModeToggle() {
         resetAudioState();
         startInactivityTimer();
         console.log('Inactivity timer started');
-        updateStatus(welcomeMessage);
+        updateStatus(MESSAGES.STATUS.LISTENING);
+
+        // Update conversation status with the enable message
+        if (elements.conversationStatus) {
+            elements.conversationStatus.innerHTML = `<span class="conversation-enable-message">${MESSAGES.CONVERSATION.ENABLE}</span>`;
+        }
+
         startListening();
     } else {
         clearInactivityTimer();
         console.log('Inactivity timer cleared');
-        updateStatus('Conversation mode disabled.');
+        updateStatus(MESSAGES.STATUS.DEFAULT);
         stopListening();
+        // Clear the conversation status
+        if (elements.conversationStatus) {
+            elements.conversationStatus.innerHTML = '';
+        }
     }
 }
 
@@ -1936,13 +1946,33 @@ async function exitConversation(isTimeout = false) {
 
 // Update status function
 function updateStatus(message) {
-    elements.status.textContent = message;
+    if (elements.status) {
+        // Remove all status classes
+        elements.status.classList.remove(
+            'status-default',
+            'status-listening',
+            'status-video-playing',
+            'status-processing',
+            'status-error',
+            'status-initializing'
+        );
 
-    // Update conversation status separately
-    if (state.isConversationMode) {
-        elements.conversationStatus.innerHTML = 'Conversation Mode is enabled.<br>Say "exit" to end conversation';
-    } else {
-        elements.conversationStatus.textContent = '';
+        // Add appropriate class based on message
+        if (message === MESSAGES.STATUS.DEFAULT) {
+            elements.status.classList.add('status-default');
+        } else if (message === MESSAGES.STATUS.LISTENING) {
+            elements.status.classList.add('status-listening');
+        } else if (message === MESSAGES.STATUS.VIDEO_PLAYING) {
+            elements.status.classList.add('status-video-playing');
+        } else if (message === MESSAGES.STATUS.PROCESSING) {
+            elements.status.classList.add('status-processing');
+        } else if (message === MESSAGES.STATUS.ERROR) {
+            elements.status.classList.add('status-error');
+        } else if (message === MESSAGES.STATUS.INITIALIZING) {
+            elements.status.classList.add('status-initializing');
+        }
+
+        elements.status.textContent = message;
     }
 }
 

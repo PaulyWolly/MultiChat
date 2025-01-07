@@ -75,15 +75,15 @@ body {
     height: 100%;
 }
 
-#status {
-    color: #333;
+status {
+    color: #0451f8;
     font-weight: bold;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
     line-height: 1.2;
-    font-size: 2.0vh;
+    font-size: 2.3vh;
     white-space: pre-wrap;
     text-align: left;
     margin: 5px 0;
@@ -98,6 +98,9 @@ body {
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
+    font-size: 2.3vh;
+    font-weight: 400;
+    max-width: 65%;
 }
 
 #input-container {
@@ -267,7 +270,6 @@ button {
     width: 100%;
     word-wrap: break-word;
     white-space: pre-wrap;
-    overflow-wrap: break-word;
 }
 
 .message-text {
@@ -1240,4 +1242,51 @@ button {
 
 .joke-text {
     color: #333;
+}
+
+/* Status message specific styles */
+.status-default {
+    color: #0451f8;
+    font-size: 2.3vh;
+    max-width: 65%;
+    font-weight: 600;
+}
+
+.status-listening {
+    color: #0451f8;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-video-playing {
+    color: #d32f2f;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-processing {
+    color: #f57c00;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-error {
+    color: #c62828;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.status-initializing {
+    color: #39393a;
+    font-size: 2.3vh;
+    font-weight: 600;
+}
+
+.conversation-enable-message {
+    color: #666;
+    font-style: italic;
+    font-size: 2.0vh;
+    font-weight: 400;
+    white-space: pre-wrap;
+    max-width: 100%;
 }
