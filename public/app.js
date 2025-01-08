@@ -1,9 +1,9 @@
 /*
   APP.js
-  Version: 20.0.2
-  AppName: Multi-Chat [v20.0.2]
+  Version: 20.0.5
+  AppName: Multi-Chat [v20.0.5]
   Created by Paul Welby
-  Updated: January 7, 2025 @5:00AM
+  Updated: January 8, 2025 @10:15AM
 */
 
 // =====================================================
@@ -11,7 +11,7 @@
 // =====================================================
 
 // SERVER URL
-const SERVER_URL = 'http://localhost:32002';
+const SERVER_URL = 'http://localhost:32005';
 
 // Time constants
 const INTERVAL = 10;  // Set timeout duration in minutes
@@ -185,7 +185,9 @@ const state = {
     sseRetryDelay: 1000,
     savingJoke: false,
     pendingNameChange: null,
-    lastRequestTime: Date.now()
+    lastRequestTime: Date.now(),
+    micRetryCount: 0,
+    maxMicRetries: 3,  // Maximum number of retries for microphone access
 };
 
 // =====================================================
@@ -345,8 +347,6 @@ async function handleCommand(text) {
         }
     }
 
-    // ... rest of the patterns ...
-
     // In handleCommand function, add proper state handling for jokes listing
     for (const pattern of patterns.listJokes) {
         const match = text.match(pattern);
@@ -425,6 +425,11 @@ async function handleCommand(text) {
         text.toLowerCase().includes('look up')) {
         return await handleBingSearch.handleSearchRequest(text);
     }
+
+    // Check for image search requests
+    if (patterns.imageSearch.search.test(text) || patterns.imageSearch.showImages.test(text)) {
+        return await handleGoogleImageSearch.handleImageSearchRequest(text);
+    }
 }
 
 // Generate Greeting
@@ -482,34 +487,6 @@ async function generateGreeting() {
     const options = greetings[timeOfDay];
     return options[Math.floor(Math.random() * options.length)];
 }
-
-// // Handle time-related queries
-// function handleTimeQuery(messageText) {
-//     const currentTime = new Date();
-//     let response;
-
-//     if (messageText.toLowerCase().includes('date and time')) {
-//         response = `Today's date is ${currentTime.toLocaleDateString()} and the local time is ${currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
-//         const messageElement = document.createElement('div');
-//         messageElement.className = 'message system-bubble datetime-response';
-//         messageElement.textContent = response;
-//         elements.chatMessages.appendChild(messageElement);
-//     } else if (messageText.toLowerCase().includes('time')) {
-//         response = `The local time is ${currentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })} PST`;
-//         const messageElement = document.createElement('div');
-//         messageElement.className = 'message system-bubble time-response';
-//         messageElement.textContent = response;
-//         elements.chatMessages.appendChild(messageElement);
-//     } else if (messageText.toLowerCase().includes('date')) {
-//         response = `Today's date is ${currentTime.toLocaleDateString()}`;
-//         const messageElement = document.createElement('div');
-//         messageElement.className = 'message system-bubble date-response';
-//         messageElement.textContent = response;
-//         elements.chatMessages.appendChild(messageElement);
-//     }
-
-//     return response;
-// }
 
 
 // =====================================================
@@ -628,6 +605,10 @@ function getPatterns() {
             /^tell me my name\??$/i,
             /^do you remember my name\??$/i
         ],
+        imageSearch: {
+            search: /(search for|look up|show me|find|get) images? (of|about|showing|with|containing) (.+)/i,
+            showImages: /^(show|display|find) images? (of|about|showing|with|containing) (.+)/i
+        },
     };
 }
 
@@ -776,7 +757,21 @@ async function loadPersonalInfo() {
 
 // Setup event listeners function
 function setupEventListeners() {
-    elements.micButton.addEventListener('click', toggleSpeechRecognition);
+    elements.micButton.addEventListener('click', () => {
+        // Ensure we have permission first
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(() => {
+                if (!state.isListening) {
+                    startListening();
+                } else {
+                    stopListening();
+                }
+            })
+            .catch(error => {
+                console.error('Microphone permission denied:', error);
+                updateStatus(MESSAGES.ERRORS.MIC_PERMISSION);
+            });
+    });
     elements.sendButton.addEventListener('click', () => sendMessage());
     elements.userInput.addEventListener('keypress', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -1007,7 +1002,7 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 // =====================================================
 
 // Send message function
-async function sendMessage(message, isGreeting = false) {
+async function sendMessage(message, isGreeting = false, metadata = {}) {
     try {
         // Check for date/time requests
         const hasDate = message.toLowerCase().match(/date/);
@@ -2617,45 +2612,8 @@ function formatMinutesPlural(minutes) {
 }
 
 // =====================================================
-// IMAGE HANDLING FUNCTIONS
+// IMAGE ANAYSIS HANDLING FUNCTIONS FOR IMAGE ANALYSIS
 // =====================================================
-
-// Image request function
-async function handleImageRequest(query) {
-    try {
-        const response = await fetch(`/api/google-image-search?q=${encodeURIComponent(query)}`);
-        const data = await response.json();
-
-        if (data.images) {
-            // Display images directly without additional text
-            displayImageResults(data.images);
-        }
-    } catch (error) {
-        console.error('Error fetching images:', error);
-    }
-}
-
-// Display image results function
-function displayImageResults(images) {
-    const messageElement = addMessageToChat('assistant', 'Here are some relevant images:');
-    const imageContainer = document.createElement('div');
-    imageContainer.className = 'image-results-container';
-
-    images.forEach(image => {
-        const imgWrapper = document.createElement('div');
-        imgWrapper.className = 'image-result';
-
-        const img = document.createElement('img');
-        img.src = image.thumbnail;
-        img.alt = image.title;
-        img.onclick = () => window.open(image.link, '_blank');
-
-        imgWrapper.appendChild(img);
-        imageContainer.appendChild(imgWrapper);
-    });
-
-    messageElement.querySelector('.message-content').appendChild(imageContainer);
-}
 
 // Image analysis function
 async function handleImageAnalysis(imageData, prompt = '') {
@@ -2748,7 +2706,7 @@ async function handleImageAnalysis(imageData, prompt = '') {
     }
 }
 
-// Handle image upload function
+// Handle image upload function for image analysis
 function handleImageUpload(event) {
     const file = event.target.files[0];
     if (file) {
@@ -2835,6 +2793,48 @@ function handleImageUpload(event) {
     }
 }
 
+
+// =====================================================
+// IMAGE HANDLING FUNCTIONS FOR GOOGLE IMAGE SEARCH
+// =====================================================
+
+// Image request function
+async function handleImageRequest(query) {
+    try {
+        const response = await fetch(`/api/google-image-search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+
+        if (data.images) {
+            // Display images directly without additional text
+            displayImageResults(data.images);
+        }
+    } catch (error) {
+        console.error('Error fetching images:', error);
+    }
+}
+
+// Display image results function
+function displayImageResults(images) {
+    const messageElement = addMessageToChat('assistant', 'Here are some relevant images:');
+    const imageContainer = document.createElement('div');
+    imageContainer.className = 'image-results-container';
+
+    images.forEach(image => {
+        const imgWrapper = document.createElement('div');
+        imgWrapper.className = 'image-result';
+
+        const img = document.createElement('img');
+        img.src = image.thumbnail;
+        img.alt = image.title;
+        img.onclick = () => window.open(image.link, '_blank');
+
+        imgWrapper.appendChild(img);
+        imageContainer.appendChild(imgWrapper);
+    });
+
+    messageElement.querySelector('.message-content').appendChild(imageContainer);
+}
+
 // Search and display images function
 async function searchAndDisplayImages(query) {
     try {
@@ -2898,6 +2898,182 @@ function insertAndStyleImages(images, messageElement) {
         }
     });
 }
+
+
+// =====================================================
+// GOOGLE IMAGE SEARCH MODULE
+// =====================================================
+
+const handleGoogleImageSearch = {
+    async handleImageSearchRequest(messageText) {
+        console.log('Google image search request:', messageText);
+
+        function createImageElement(imageData) {
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'image-container';
+
+            const img = document.createElement('img');
+            img.src = imageData.thumbnailUrl;
+            img.alt = imageData.alt || 'Search result image';
+            img.className = 'search-result-image';
+            img.onclick = () => window.open(imageData.imageUrl, '_blank');
+
+            // Add webpage source link
+            const sourceLink = document.createElement('a');
+            sourceLink.href = imageData.sourceUrl;
+            sourceLink.target = '_blank';
+            sourceLink.className = 'image-webpage-source';
+
+            const sourceIcon = document.createElement('span');
+            sourceIcon.className = 'source-icon';
+            sourceIcon.innerHTML = '🔗';
+            sourceLink.appendChild(sourceIcon);
+
+            imageContainer.appendChild(img);
+            imageContainer.appendChild(sourceLink);
+
+            return imageContainer;
+        }
+
+        try {
+            const query = messageText
+                .replace(/search for|look up|show me|find|images? of/gi, '')
+                .trim();
+
+            const response = await fetch('/api/google-image-search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+            });
+
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const data = await response.json();
+
+            if (data.success && data.images) {
+                const message = `Here are some images for "${query}":`;
+                const imageGrid = document.createElement('div');
+                imageGrid.className = 'image-grid';
+
+                data.images.forEach(imageData => {
+                    imageGrid.appendChild(createImageElement(imageData));
+                });
+
+                // Add message with both text and image grid
+                const messageElement = document.createElement('div');
+                messageElement.textContent = message;
+                addMessageToChat('assistant', messageElement.outerHTML + imageGrid.outerHTML, {
+                    type: 'image-search',
+                    messageType: 'image'
+                });
+            }
+            return true;
+        } catch (error) {
+            console.error('Google Image Search error:', error);
+            addMessageToChat('assistant', 'Sorry, there was an error processing your image search request.');
+            return true;
+        }
+    },
+
+    // Integrate existing handleImageRequest function
+    async handleImageRequest(query) {
+        try {
+            const response = await fetch(`/api/google-image-search?q=${encodeURIComponent(query)}`);
+            const data = await response.json();
+
+            if (data.images) {
+                this.displayImageResults(data.images);
+            }
+        } catch (error) {
+            console.error('Error fetching images:', error);
+        }
+    },
+
+    // Integrate existing displayImageResults function
+    displayImageResults(images) {
+        const messageElement = addMessageToChat('assistant', 'Here are some relevant images:');
+        const imageContainer = document.createElement('div');
+        imageContainer.className = 'image-results-container';
+
+        images.forEach(image => {
+            const imgWrapper = document.createElement('div');
+            imgWrapper.className = 'image-result';
+
+            const img = document.createElement('img');
+            img.src = image.thumbnail;
+            img.alt = image.title;
+            img.onclick = () => window.open(image.link, '_blank');
+
+            imgWrapper.appendChild(img);
+            imageContainer.appendChild(imgWrapper);
+        });
+
+        messageElement.querySelector('.message-content').appendChild(imageContainer);
+    },
+
+    // Integrate existing searchAndDisplayImages function
+    async searchAndDisplayImages(query) {
+        try {
+            const response = await fetch(`/api/google-image-search?q=${encodeURIComponent(query)}`);
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.error}`);
+            }
+            const data = await response.json();
+
+            if (data.items && data.items.length > 0) {
+                return { images: data.items.map(item => ({ url: item.link, name: item.title })) };
+            }
+            return null;
+        } catch (error) {
+            console.error('Error searching images:', error);
+            return null;
+        }
+    },
+
+    // Integrate existing insertAndStyleImages function
+    insertAndStyleImages(images, messageElement) {
+        const imageSection = `
+            <div class="image-section" style="margin-top: 15px; border-top: 1px solid #ccc; padding-top: 10px;">
+                <h3 style="font-size: 1.2em; margin-bottom: 10px; color: #333; font-weight: bold;">Images:</h3>
+                <div class="image-container" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; max-width: 100%;">
+                    ${images.map(image => `
+                        <a href="${image.link}" target="_blank" rel="noopener noreferrer" class="image-link"
+                            style="cursor: pointer; text-decoration: none; display: block; border: 1px solid #ddd; border-radius: 5px; overflow: hidden; transition: transform 0.2s ease-in-out; aspect-ratio: 1;">
+                            <img src="${image.link}" alt="${image.title}" title="${image.title}"
+                                    style="width: 100%; height: 100%; object-fit: cover; display: block;">
+                        </a>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        // Check if images section already exists
+        const existingImageSection = messageElement.querySelector('.image-section');
+        if (existingImageSection) {
+            existingImageSection.remove();
+        }
+
+        messageElement.insertAdjacentHTML('beforeend', imageSection);
+
+        // Add hover effects and error handling
+        messageElement.querySelectorAll('.image-link').forEach(link => {
+            link.onmouseover = () => link.style.transform = 'scale(1.05)';
+            link.onmouseout = () => link.style.transform = 'scale(1)';
+
+            // Add error handling for images
+            const img = link.querySelector('img');
+            img.onerror = () => {
+                img.src = img.getAttribute('data-thumbnail') || 'path/to/fallback-image.jpg';
+                console.log('Image failed to load, falling back to thumbnail:', img.src);
+            };
+
+            // Store thumbnail as backup
+            if (image.thumbnail) {
+                img.setAttribute('data-thumbnail', image.thumbnail);
+            }
+        });
+    }
+};
 
 // =====================================================
 // DATE/TIME HANDLING FUNCTIONS
@@ -2972,56 +3148,45 @@ function getTimeOfDay() {
 
 // Initialize speech recognition function
 function initializeSpeechRecognition() {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-        console.error('Speech recognition not supported');
-        return;
+    // Check if recognition is already initialized
+    if (state.recognition) {
+        state.recognition.stop();
     }
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    state.recognition = new SpeechRecognition();
-    state.recognition.continuous = false;
-    state.recognition.interimResults = false;
+    try {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        state.recognition = new SpeechRecognition();
 
-    state.recognition.onstart = () => {
-        console.log('Speech recognition started');
-        state.isListening = true;
-        updateStatus('Listening...');
-    };
+        // Set properties
+        state.recognition.continuous = true;
+        state.recognition.interimResults = false;
+        state.recognition.maxAlternatives = 1;
 
-    state.recognition.onerror = (event) => {
-        console.log('Speech recognition error:', event.error);
-        state.isListening = false;
+        // Add event handlers
+        state.recognition.onstart = () => {
+            console.log('Speech recognition started');
+            state.isListening = true;
+            updateStatus(MESSAGES.STATUS.LISTENING);
+            state.micRetryCount = 0;  // Reset retry count on successful start
+        };
 
-        if (event.error === 'aborted') {
-            console.log('Recognition aborted, not auto-restarting');
-            return;
-        }
-
-        // updateStatus(`Error in speech recognition: ${event.error}`);
-    };
-
-    state.recognition.onend = () => {
-        console.log('Speech recognition ended');
-        state.isListening = false;
-
-        if (state.isConversationMode && !state.isProcessing && !state.isAISpeaking && !state.stopRequested) {
-            console.log('Scheduling restart of listening...');
-            setTimeout(() => {
-                if (!state.isListening && !state.isProcessing && !state.isAISpeaking && !state.stopRequested) {
-                    console.log('Attempting to restart listening after delay');
-                    safeStartListening();
-                } else {
-                    console.log('Conditions not met for restart:', {
-                        isListening: state.isListening,
-                        isProcessing: state.isProcessing,
-                        isAISpeaking: state.isAISpeaking
-                    });
+        state.recognition.onerror = (event) => {
+            console.log('Speech recognition error:', event.error);
+            // Handle specific error cases
+            if (event.error === 'not-allowed') {
+                state.micRetryCount++;
+                if (state.micRetryCount >= state.maxMicRetries) {
+                    console.log('Max microphone retries reached, stopping attempts');
+                    updateStatus(MESSAGES.ERRORS.MIC_PERMISSION);
+                    state.isListening = false;
+                    return;  // Stop retrying
                 }
-            }, 1000);
-        }
-    };
-
-    state.recognition.onresult = handleSpeechResult;
+            }
+        };
+    } catch (error) {
+        console.error('Speech recognition initialization error:', error);
+        updateStatus(MESSAGES.ERRORS.INIT);
+    }
 }
 
 // Toggle speech recognition function
@@ -3854,11 +4019,20 @@ const handleMyJokes = {
 
             if (data.success && data.jokes && data.jokes.length > 0) {
                 const messageText = "Here is a listing of your jokes:";
+                const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+                console.log('Joke List Metadata:', {
+                    model: 'system',
+                    duration: duration,
+                    calculatedAt: new Date().toISOString(),
+                    startTime: startTime,
+                    endTime: performance.now()
+                });
+
                 addMessageToChat('assistant', messageText, {
-                    modelName: elements.modelSelect.value,
-                    duration: ((performance.now() - startTime) / 1000).toFixed(2),
+                    model: 'system',
+                    duration: duration,
                     tokens: 41,
-                    type: 'joke-list'
+                    type: 'chat'
                 });
 
                 // Create message element with joke list
@@ -4303,3 +4477,19 @@ const handleBingSearch = {
 // =====================================================
 // END OF app.js FILE v20.0.0
 // =====================================================
+
+// Update the scheduling restart function
+function scheduleRecognitionRestart() {
+    // Don't restart if we've hit max retries for mic permission
+    if (state.micRetryCount >= state.maxMicRetries) {
+        console.log('Not restarting recognition - max retries reached');
+        return;
+    }
+
+    setTimeout(() => {
+        if (state.isListening) {
+            console.log('Attempting to restart recognition');
+            startListening();
+        }
+    }, 1000);
+}

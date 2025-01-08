@@ -1,6 +1,6 @@
 # Release Notes
 
-## Version 20.0.2 (January 7, 2025)
+## Version 20.0.5 (January 8, 2025)
 ### New Features
 - Added metadata display for all response types
 - Improved handling of system-generated responses (date/time)

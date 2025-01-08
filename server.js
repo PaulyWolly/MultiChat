@@ -1,9 +1,9 @@
 /*
   SERVER.js
-  Version: 20.0.2
-  AppName: Multi-Chat [v20.0.2]
+  Version: 20.0.5
+  AppName: Multi-Chat [v20.0.5]
   Created by Paul Welby
-  Updated: January 7, 2025 @5:00AM
+  Updated: January 8, 2025 @10:15AM
 */
 
 // Required dependencies
@@ -17,6 +17,8 @@ const OpenAI           = require('openai');
 const axios            = require('axios');
 const mongoose         = require('mongoose');
 const { google }       = require('googleapis');
+const https            = require('https');
+const fs               = require('fs');
 
 // Load environment variables FIRST
 dotenv.config();
@@ -36,7 +38,7 @@ const openai = new OpenAI({
 const app = express();
 
 // Set the port
-const port = process.env.PORT || 32002;
+const port = process.env.PORT || 32005;
 
 // Configure middleware with increased limits
 app.use(cors());
@@ -48,6 +50,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 console.log('Starting server initialization...');
 
+// Add SSL certificates for local development
+const options = {
+    key: fs.readFileSync('path/to/key.pem'),
+    cert: fs.readFileSync('path/to/cert.pem')
+};
+
+https.createServer(options, app).listen(32002, () => {
+    console.log('Secure server running on port 32002');
+});
 
 // =====================================================
 // UTILITY/HELPER FUNCTIONS

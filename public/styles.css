@@ -1,9 +1,9 @@
 /*
   STYLES.css
-  Version: 20.0.2
-  AppName: Multi-Chat [v20.0.2]
+  Version: 20.0.5
+  AppName: Multi-Chat [v20.0.5]
   Created by Paul Welby
-  Updated: January 7, 2025 @5:00AM
+  Updated: January 8, 2025 @10:15AM
 */
 
 body {
@@ -1248,46 +1248,80 @@ button {
 /* Status message specific styles */
 .status-default {
     color: #0451f8;
-    font-size: 2.3vh;
+    font-size: 2.2vh;
     max-width: 70%;
     font-weight: 600;
 }
 
 .status-listening {
     color: #0451f8;
-    font-size: 2.3vh;
+    font-size: 2.2vh;
     font-weight: 600;
 }
 
 .status-video-playing {
-    color: #d32f2f;
-    font-size: 2.3vh;
+    color: #d22f2f;
+    font-size: 2.2vh;
     font-weight: 600;
 }
 
 .status-processing {
     color: #f57c00;
-    font-size: 2.3vh;
+    font-size: 2.2vh;
     font-weight: 600;
 }
 
 .status-error {
     color: #c62828;
-    font-size: 2.3vh;
+    font-size: 2.2vh;
     font-weight: 600;
 }
 
 .status-initializing {
-    color: #39393a;
-    font-size: 2.3vh;
+    color: #29393a;
+    font-size: 2.2vh;
     font-weight: 600;
 }
 
 .conversation-enable-message {
     color: #666;
     font-style: italic;
-    font-size: 2.0vh;
+    font-size: 2.2vh;
     font-weight: 400;
     white-space: pre-wrap;
     max-width: 100%;
+}
+
+/* Styles for image webpage source link */
+.image-container {
+    position: relative;
+    display: inline-block;
+    margin: 5px;
+    overflow: hidden;
+}
+
+.image-webpage-source {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 5px;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background-color 0.2s;
+}
+
+.source-icon {
+    color: white;
+    font-size: 14px;
+}
+
+.image-webpage-source:hover {
+    background: rgba(0, 0, 0, 0.8);
 }
