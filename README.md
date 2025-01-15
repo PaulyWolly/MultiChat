@@ -2,6 +2,7 @@
 
 [![Release Notes](https://img.shields.io/github/release/PaulyWolly/MultiChat)](https://github.com/PaulyWolly/MultiChat/releases)
 
+
 ## Overview
 A sophisticated AI chat application featuring voice interaction, persistent memory storage, and multi-modal communication capabilities. Built with Node.js, Express, MongoDB, and modern web technologies.
 
