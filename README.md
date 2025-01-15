@@ -1,6 +1,6 @@
 # AI Chat Application with Memory and Voice Interaction
 
-[![Release Notes](https://img.shields.io/github/release/PaulyWolly/MultiChat)](https://github.com/PaulyWolly/MultiChat/releases)
+[![Release Notes](https://img.shields.io/github/release/PaulyWolly/MultiChat)](https://github.com/PaulyWolly/MultiChat/releases?cacheSeconds=3600)
 
 
 ## Overview
