@@ -1,5 +1,6 @@
 # AI Chat Application with Memory and Voice Interaction
 #### v20.0.5
+
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/PaulyWolly/MultiChat)
 
 ## Overview
