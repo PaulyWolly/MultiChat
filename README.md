@@ -1,7 +1,7 @@
 # AI Chat Application with Memory and Voice Interaction
 #### v20.0.5
 
-!(https://img.shields.io/github/v/release/PaulyWolly/MultiChat)
+![GitHub release](https://img.shields.io/github/v/release/PaulyWolly/MultiChat)
 
 ## Overview
 A sophisticated AI chat application featuring voice interaction, persistent memory storage, and multi-modal communication capabilities. Built with Node.js, Express, MongoDB, and modern web technologies.
